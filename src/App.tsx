@@ -143,12 +143,8 @@ export default function App() {
       const saved = localStorage.getItem('nextgen_logged_in_user');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
-    // Default founder merchant session
-    return {
-      email: 'yasirusankalpa2026@gmail.com',
-      name: 'Yasiru Sankalpa',
-      storeName: 'AURA Studios'
-    };
+    // Public visitors start unauthenticated (pure customer view)
+    return null;
   });
 
   // Public Buyer Mode vs Full Merchant Navigation
@@ -702,12 +698,13 @@ export default function App() {
               onAddReview={handleAddReview}
               onUpdateTheme={handleUpdateTheme}
               onUpdateSettings={handleUpdateSettings}
-              isOwnerMode={true}
-              isPublicBuyer={false}
+              isOwnerMode={!!loggedInUser && !isPublicBuyerView}
+              isPublicBuyer={!loggedInUser || isPublicBuyerView}
             />
 
-            {/* Bottom Navigation Switcher for Store Owner ("උඩින් නෙවේ යටින් අර තියෙන විදියටම තියෙන්න ඕන මාරු වෙන්න") */}
-            <div className="fixed bottom-4 inset-x-0 z-50 flex justify-center pointer-events-none px-4">
+            {/* Bottom Navigation Switcher for Store Owner (Only shown when merchant is logged in) */}
+            {!!loggedInUser && !isPublicBuyerView && (
+              <div className="fixed bottom-4 inset-x-0 z-50 flex justify-center pointer-events-none px-4">
               <div className="pointer-events-auto bg-slate-950/95 text-white px-4 py-2.5 rounded-full border border-slate-800 shadow-2xl backdrop-blur-md flex items-center gap-3 text-xs font-bold animate-in fade-in slide-in-from-bottom-2">
                 <div className="flex items-center gap-2 pl-1 pr-2 border-r border-slate-800">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -750,6 +747,7 @@ export default function App() {
                 </button>
               </div>
             </div>
+            )}
           </>
         )}
 

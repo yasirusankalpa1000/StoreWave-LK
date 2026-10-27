@@ -389,7 +389,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
           className="text-white text-xs sm:text-sm py-2 px-3 text-center font-medium tracking-wide flex items-center justify-center gap-2 shadow-xs relative group"
         >
           <span>{theme.announcementBar}</span>
-          {!isPublicBuyer && (
+          {isOwnerMode && (
             <button
               type="button"
               onClick={() => {
@@ -417,7 +417,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                 alt={settings.storeName} 
                 className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl object-cover shadow-sm border border-slate-200 cursor-pointer" 
                 onClick={() => {
-                  if (!isPublicBuyer) {
+                  if (isOwnerMode) {
                     setQuickEditTab('store');
                     setIsQuickEditOpen(true);
                   }
@@ -427,7 +427,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
               <div 
                 className="cursor-pointer"
                 onClick={() => {
-                  if (!isPublicBuyer) {
+                  if (isOwnerMode) {
                     setQuickEditTab('store');
                     setIsQuickEditOpen(true);
                   }
@@ -444,7 +444,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                 <span className="px-1.5 py-0.2 rounded-md bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 font-black text-[9px] uppercase tracking-wider shadow-2xs">
                   LK
                 </span>
-                {!isPublicBuyer && (
+                {isOwnerMode && (
                   <button
                     type="button"
                     onClick={() => {
@@ -547,7 +547,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
           />
 
           {/* Quick Edit Banner Button for Store Owner */}
-          {!isPublicBuyer && (
+          {isOwnerMode && (
             <div className="absolute top-3 right-3 sm:top-5 sm:right-5 z-20">
               <button
                 type="button"
