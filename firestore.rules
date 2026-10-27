@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection test doc
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // Stores collection
+    match /stores/{storeId} {
+      allow read: if isValidId(storeId);
+      allow create: if isValidId(storeId) 
+        && request.resource.data.name is string 
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.ownerEmail is string;
+      allow update: if isValidId(storeId);
+      allow delete: if false;
+
+      // Products subcollection
+      match /products/{productId} {
+        allow read: if isValidId(storeId) && isValidId(productId);
+        allow write: if isValidId(storeId) && isValidId(productId);
+      }
+
+      // Orders subcollection
+      match /orders/{orderId} {
+        allow read: if isValidId(storeId) && isValidId(orderId);
+        // Anyone (buyer) can create an order for the store
+        allow create: if isValidId(storeId) && isValidId(orderId)
+          && request.resource.data.customerName is string
+          && request.resource.data.customerPhone is string
+          && request.resource.data.total is number;
+        allow update, delete: if isValidId(storeId) && isValidId(orderId);
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "StoreWave LK — Cloud E-Commerce & Online Store Builder",
+  "description": "Sri Lanka's #1 cloud e-commerce platform and store builder. 1-Click Daraz affiliate import, cash on delivery, and automated WhatsApp orders.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

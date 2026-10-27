@@ -1,0 +1,6 @@
+# StoreWave LK - Search Engine Crawlers Access
+User-agent: *
+Allow: /
+
+# Sitemap Location
+Sitemap: /sitemap.xml

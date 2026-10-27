@@ -1,0 +1,84 @@
+{
+  "entities": {
+    "Store": {
+      "title": "Store",
+      "description": "Tenant e-commerce store profile and settings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "slug": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "ownerEmail": { "type": "string", "format": "email" },
+        "ownerName": { "type": "string", "maxLength": 100 },
+        "passwordHash": { "type": "string" },
+        "whatsappNumber": { "type": "string", "maxLength": 20 },
+        "currency": { "type": "string" },
+        "plan": { "type": "string" },
+        "theme": { "type": "object" },
+        "settings": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "slug", "name", "ownerEmail"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Store item added by merchant for public sale",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "storeId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "price": { "type": "number" },
+        "costPrice": { "type": "number" },
+        "compareAtPrice": { "type": "number" },
+        "images": { "type": "array" },
+        "category": { "type": "string", "maxLength": 100 },
+        "stock": { "type": "number" },
+        "rating": { "type": "number" },
+        "reviewCount": { "type": "number" },
+        "fulfillmentType": { "type": "string" },
+        "codAvailable": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "storeId", "title", "price"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order placed on store",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "storeId": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "customerName": { "type": "string", "maxLength": 100 },
+        "customerPhone": { "type": "string", "maxLength": 20 },
+        "customerEmail": { "type": "string" },
+        "shippingAddress": { "type": "string", "maxLength": 500 },
+        "district": { "type": "string" },
+        "items": { "type": "array" },
+        "total": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "fulfillmentStatus": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "storeId", "orderNumber", "customerName", "customerPhone", "total"]
+    }
+  },
+  "firestore": {
+    "/stores/{storeId}": {
+      "schema": "Store",
+      "description": "Store entity documents"
+    },
+    "/stores/{storeId}/products/{productId}": {
+      "schema": "Product",
+      "description": "Store products collection"
+    },
+    "/stores/{storeId}/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Store orders collection"
+    }
+  }
+}
