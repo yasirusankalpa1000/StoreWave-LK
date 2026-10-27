@@ -30,7 +30,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Pencil,
-  Palette
+  Palette,
+  Image as ImageIcon,
+  ArrowLeft,
+  LogIn,
+  LayoutDashboard
 } from 'lucide-react';
 import { Product, Order, StoreTheme, StoreSettings, OrderItem, PaymentMethod, CurrencyCode, ProductReview } from '../types/store';
 import { LANGUAGES, SupportedLanguage, getT, formatPrice } from '../utils/i18n';
@@ -52,6 +56,8 @@ interface StorefrontProps {
   onUpdateSettings?: (settings: StoreSettings) => void;
   isOwnerMode?: boolean;
   isPublicBuyer?: boolean;
+  onOpenLogin?: () => void;
+  onOpenDashboard?: () => void;
 }
 
 export const Storefront: React.FC<StorefrontProps> = ({
@@ -69,9 +75,28 @@ export const Storefront: React.FC<StorefrontProps> = ({
   onUpdateTheme,
   onUpdateSettings,
   isOwnerMode = false,
-  isPublicBuyer = false
+  isPublicBuyer = false,
+  onOpenLogin,
+  onOpenDashboard
 }) => {
   const t = getT(language);
+
+  // Deal Pack & Direct Product Deep-Link state
+  const [activePackSlug, setActivePackSlug] = useState<string | null>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('pack');
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const [deepLinkedProductId, setDeepLinkedProductId] = useState<string | null>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('product');
+    } catch (e) {
+      return null;
+    }
+  });
 
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -170,16 +195,42 @@ export const Storefront: React.FC<StorefrontProps> = ({
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [deletedSuccessToast, setDeletedSuccessToast] = useState<string | null>(null);
 
+  // Active Deal Pack object (from URL ?pack=slug)
+  const currentPack = activePackSlug 
+    ? settings.dealPacks?.find(p => p.slug === activePackSlug || p.id === activePackSlug) 
+    : null;
+
+  // Auto-scroll and focus deep-linked product (from URL ?product=id)
+  useEffect(() => {
+    if (deepLinkedProductId) {
+      const match = products.find(p => p.id === deepLinkedProductId);
+      if (match) {
+        setSelectedProduct(match);
+        setTimeout(() => {
+          const el = document.getElementById(`product-${deepLinkedProductId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 500);
+      }
+    }
+  }, [deepLinkedProductId, products]);
+
   // Categories list
   const categories = ['All', ...Array.from(new Set(products.map(p => p.category)))];
 
-  // Filtered products
-  const filteredProducts = products.filter(p => {
+  // Base Filtered products
+  const baseFilteredProducts = products.filter(p => {
     const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
     const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           p.description.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
   });
+
+  // If a Deal Pack is active, ONLY display products that belong to this curated bundle!
+  const filteredProducts = currentPack
+    ? products.filter(p => currentPack.productIds.includes(p.id) || (currentPack.priceCap && p.price <= currentPack.priceCap))
+    : baseFilteredProducts;
 
   // Cart calculations
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -519,6 +570,30 @@ export const Storefront: React.FC<StorefrontProps> = ({
                 </span>
               )}
             </button>
+
+            {/* Merchant Sign In / Dashboard Direct Access */}
+            {!isOwnerMode && onOpenLogin && (
+              <button
+                type="button"
+                onClick={onOpenLogin}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900 hover:bg-indigo-600 text-slate-100 font-bold text-xs transition shadow-xs cursor-pointer"
+                title={language === 'si' ? 'වෙළඳසැල් හිමිකරු පිවිසුම' : 'Merchant Sign In'}
+              >
+                <LogIn className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="hidden sm:inline">{language === 'si' ? 'හිමිකරු පිවිසුම' : 'Merchant Login'}</span>
+              </button>
+            )}
+
+            {isOwnerMode && onOpenDashboard && (
+              <button
+                type="button"
+                onClick={onOpenDashboard}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs transition shadow-md cursor-pointer"
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{language === 'si' ? 'Dashboard එක' : 'Dashboard'}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -537,55 +612,98 @@ export const Storefront: React.FC<StorefrontProps> = ({
         </div>
       </header>
 
-      {/* 3. Hero Banner (Mobile Optimized) */}
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4 sm:pt-6">
-        <div className="relative rounded-2xl sm:rounded-3xl overflow-hidden shadow-lg min-h-[260px] sm:min-h-[380px] flex items-center text-white group">
-          <img 
-            src={theme.bannerImage} 
-            alt="Hero Banner" 
-            className="absolute inset-0 w-full h-full object-cover object-center brightness-50"
-          />
-
-          {/* Quick Edit Banner Button for Store Owner */}
-          {isOwnerMode && (
-            <div className="absolute top-3 right-3 sm:top-5 sm:right-5 z-20">
-              <button
-                type="button"
-                onClick={() => {
-                  setQuickEditTab('banner');
-                  setIsQuickEditOpen(true);
-                }}
-                className="bg-slate-950/80 hover:bg-slate-950 text-white border border-white/25 hover:border-emerald-400 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl sm:rounded-2xl shadow-xl flex items-center gap-2 text-xs font-bold transition backdrop-blur-md cursor-pointer group/btn"
-                title={language === 'si' ? 'බැනරයේ මාතෘකා සහ පින්තූරය වෙනස් කරන්න' : 'Edit Banner Heading & Image'}
-              >
-                <Palette className="w-3.5 h-3.5 text-emerald-400 group-hover/btn:rotate-12 transition-transform" />
-                <span>{language === 'si' ? '✏️ බැනරය සහ වාක්‍ය වෙනස් කරන්න' : '✏️ Edit Banner & Texts'}</span>
-              </button>
-            </div>
-          )}
-          <div className="relative z-10 p-5 sm:p-12 max-w-2xl space-y-3 sm:space-y-4">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md text-[10px] sm:text-xs font-bold uppercase tracking-wider text-emerald-300">
-              <Sparkles className="w-3 h-3" />
-              {t.officialPartner}
-            </div>
-            <h2 className="text-2xl sm:text-5xl font-black tracking-tight leading-tight">
-              {theme.bannerText}
-            </h2>
-            <p className="text-slate-200 text-xs sm:text-base leading-relaxed line-clamp-2 sm:line-clamp-none">
-              {theme.bannerSubtext}
-            </p>
-            <div className="pt-1 flex flex-wrap gap-2.5">
-              <a 
-                href="#products-section" 
-                className="px-6 py-2.5 rounded-full bg-white text-slate-900 font-bold hover:bg-slate-100 transition shadow-md text-xs sm:text-sm cursor-pointer inline-flex items-center gap-1.5"
-              >
-                <span>{t.exploreProducts}</span>
-                <span>↓</span>
-              </a>
+      {/* 2.5. Dedicated Deal Pack Campaign Banner (If ?pack=slug is active) */}
+      {currentPack ? (
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4 sm:pt-6">
+          <div className="relative rounded-2xl sm:rounded-3xl overflow-hidden shadow-xl bg-gradient-to-r from-amber-500 via-orange-600 to-rose-600 p-6 sm:p-10 text-white">
+            <div className="relative z-10 max-w-2xl space-y-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-[11px] font-black uppercase tracking-wider text-amber-200">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{language === 'si' ? '🔥 විශේෂ Deal Pack එක' : '🔥 Exclusive Deal Pack'}</span>
+                {currentPack.priceCap && (
+                  <span className="bg-white text-slate-950 px-2 py-0.5 rounded-full font-black text-[10px]">
+                    Under Rs. {currentPack.priceCap.toLocaleString()}
+                  </span>
+                )}
+              </div>
+              <h2 className="text-2xl sm:text-5xl font-black tracking-tight leading-tight">
+                {currentPack.title}
+              </h2>
+              <p className="text-white/95 text-xs sm:text-base leading-relaxed">
+                {currentPack.description}
+              </p>
+              <div className="pt-2 flex items-center gap-3 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivePackSlug(null);
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('pack');
+                    window.history.pushState({}, '', url.toString());
+                  }}
+                  className="px-4 py-2 rounded-full bg-white text-slate-950 font-black text-xs hover:bg-slate-100 transition shadow-lg flex items-center gap-2 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>{language === 'si' ? '← සියලුම භාණ්ඩ බලන්න (View Full Store)' : '← View Full Store'}</span>
+                </button>
+                <span className="text-[11px] text-amber-100 font-medium">
+                  {filteredProducts.length} {language === 'si' ? 'භාණ්ඩ මෙම පැක් එකට ඇතුළත් කර ඇත' : 'items in this bundle'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : (
+        /* 3. Hero Banner (Mobile Optimized) */
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4 sm:pt-6">
+          <div className="relative rounded-2xl sm:rounded-3xl overflow-hidden shadow-lg min-h-[260px] sm:min-h-[380px] flex items-center text-white group">
+            <img 
+              src={theme.bannerImage} 
+              alt="Hero Banner" 
+              className="absolute inset-0 w-full h-full object-cover object-center brightness-50"
+            />
+
+            {/* Quick Edit Banner Button for Store Owner */}
+            {isOwnerMode && (
+              <div className="absolute top-3 right-3 sm:top-5 sm:right-5 z-20">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickEditTab('banner');
+                    setIsQuickEditOpen(true);
+                  }}
+                  className="bg-slate-950/80 hover:bg-slate-950 text-white border border-white/25 hover:border-emerald-400 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl sm:rounded-2xl shadow-xl flex items-center gap-2 text-xs font-bold transition backdrop-blur-md cursor-pointer group/btn"
+                  title={language === 'si' ? 'බැනරයේ මාතෘකා සහ පින්තූරය වෙනස් කරන්න' : 'Edit Banner Heading & Image'}
+                >
+                  <Palette className="w-3.5 h-3.5 text-emerald-400 group-hover/btn:rotate-12 transition-transform" />
+                  <span>{language === 'si' ? '✏️ බැනරය සහ වාක්‍ය වෙනස් කරන්න' : '✏️ Edit Banner & Texts'}</span>
+                </button>
+              </div>
+            )}
+            <div className="relative z-10 p-5 sm:p-12 max-w-2xl space-y-3 sm:space-y-4">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md text-[10px] sm:text-xs font-bold uppercase tracking-wider text-emerald-300">
+                <Sparkles className="w-3 h-3" />
+                {t.officialPartner}
+              </div>
+              <h2 className="text-2xl sm:text-5xl font-black tracking-tight leading-tight">
+                {theme.bannerText}
+              </h2>
+              <p className="text-slate-200 text-xs sm:text-base leading-relaxed line-clamp-2 sm:line-clamp-none">
+                {theme.bannerSubtext}
+              </p>
+              <div className="pt-1 flex flex-wrap gap-2.5">
+                <a 
+                  href="#products-section" 
+                  className="px-6 py-2.5 rounded-full bg-white text-slate-900 font-bold hover:bg-slate-100 transition shadow-md text-xs sm:text-sm cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <span>{t.exploreProducts}</span>
+                  <span>↓</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 4. Trust Badges (Compact on mobile) */}
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6">
@@ -688,8 +806,13 @@ export const Storefront: React.FC<StorefrontProps> = ({
 
             return (
               <div 
+                id={`product-${product.id}`}
                 key={product.id}
-                className="group bg-white rounded-2xl overflow-hidden border border-slate-200/80 shadow-xs hover:shadow-lg transition-all duration-300 flex flex-col justify-between"
+                className={`group bg-white rounded-2xl overflow-hidden border transition-all duration-300 flex flex-col justify-between ${
+                  deepLinkedProductId === product.id 
+                    ? 'border-indigo-600 ring-4 ring-indigo-500/30 shadow-xl' 
+                    : 'border-slate-200/80 shadow-xs hover:shadow-lg'
+                }`}
               >
                 <div>
                   {/* Product Image */}
@@ -702,6 +825,18 @@ export const Storefront: React.FC<StorefrontProps> = ({
                     
                     {/* Badges */}
                     <div className="absolute top-2.5 left-2.5 flex flex-col gap-1">
+                      {deepLinkedProductId === product.id && (
+                        <span className="px-2 py-0.5 rounded-md bg-indigo-600 text-white text-[10px] font-black uppercase tracking-wider shadow-xs flex items-center gap-1 animate-pulse">
+                          <CheckCircle2 className="w-2.5 h-2.5" />
+                          <span>Selected</span>
+                        </span>
+                      )}
+                      {settings.dealPacks?.some(dp => dp.productIds.includes(product.id)) && (
+                        <span className="px-2 py-0.5 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-black uppercase tracking-wider shadow-xs flex items-center gap-1">
+                          <Sparkles className="w-2.5 h-2.5" />
+                          <span>Deal Pack</span>
+                        </span>
+                      )}
                       {product.videoUrl && (
                         <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider shadow-xs flex items-center gap-1">
                           <Play className="w-2.5 h-2.5 fill-current" />
@@ -1806,17 +1941,59 @@ export const Storefront: React.FC<StorefrontProps> = ({
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="font-bold text-slate-800">
-                    {language === 'si' ? 'බැනර් පින්තූරයේ Link එක (Banner Image URL):' : 'Banner Image URL:'}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-800 text-xs">
+                      {language === 'si' ? 'බැනර් පින්තූරය (Banner Photo):' : 'Banner Photo:'}
+                    </label>
+                    <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                      {language === 'si' ? '📁 Gallery එකෙන් තෝරන්න' : 'Direct Upload'}
+                    </span>
+                  </div>
+
+                  {/* Device File Picker for Phone or PC Gallery */}
+                  <label className="flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 font-bold text-xs cursor-pointer transition">
+                    <ImageIcon className="w-4 h-4 text-indigo-600" />
+                    <span>{language === 'si' ? '📱 ෆෝන් එකෙන් / PC එකෙන් පින්තූරයක් තෝරන්න' : '📱 Choose from Phone / PC Gallery'}</span>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      className="hidden" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            if (ev.target?.result) {
+                              setEditBannerImage(ev.target.result as string);
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
                   </label>
-                  <input 
-                    type="text" 
-                    value={editBannerImage}
-                    onChange={(e) => setEditBannerImage(e.target.value)}
-                    placeholder="https://images.unsplash.com/..."
-                    className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                  />
+
+                  {/* Optional Image URL input */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-slate-500 font-medium block">
+                      {language === 'si' ? 'හෝ පින්තූරයේ URL Link එකක් ඇතුළත් කරන්න:' : 'Or enter an Image URL:'}
+                    </span>
+                    <input 
+                      type="text" 
+                      value={editBannerImage}
+                      onChange={(e) => setEditBannerImage(e.target.value)}
+                      placeholder="https://images.unsplash.com/..."
+                      className="w-full p-2 rounded-xl border border-slate-300 text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {editBannerImage && (
+                    <div className="relative rounded-xl overflow-hidden h-24 border border-slate-200">
+                      <img src={editBannerImage} alt="Preview" className="w-full h-full object-cover" />
+                      <span className="absolute bottom-1 right-2 bg-slate-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">Preview</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Preset Banner Quick Chooser */}
@@ -1891,17 +2068,66 @@ export const Storefront: React.FC<StorefrontProps> = ({
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="font-bold text-slate-800">
-                    {language === 'si' ? 'ඔබගේ Custom Logo Link එක (Logo Image URL):' : 'Custom Logo Image URL (Optional):'}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-800 text-xs">
+                      {language === 'si' ? 'කඩේ ලාංඡනය (Custom Logo):' : 'Custom Logo Image:'}
+                    </label>
+                    <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                      {language === 'si' ? '📁 Gallery එකෙන් තෝරන්න' : 'Direct Upload'}
+                    </span>
+                  </div>
+
+                  {/* Device File Picker for Phone or PC Gallery */}
+                  <label className="flex items-center justify-center gap-2 p-2.5 rounded-xl border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 font-bold text-xs cursor-pointer transition">
+                    <ImageIcon className="w-4 h-4 text-indigo-600" />
+                    <span>{language === 'si' ? '📱 ෆෝන් එකෙන් / PC එකෙන් Logo එකක් තෝරන්න' : '📱 Choose Logo from Phone / PC Gallery'}</span>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      className="hidden" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            if (ev.target?.result) {
+                              setEditLogoUrl(ev.target.result as string);
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
                   </label>
-                  <input 
-                    type="text" 
-                    value={editLogoUrl}
-                    onChange={(e) => setEditLogoUrl(e.target.value)}
-                    placeholder="https://.../my-store-logo.png"
-                    className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-mono focus:border-indigo-500 focus:outline-none"
-                  />
+
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-slate-500 font-medium block">
+                      {language === 'si' ? 'හෝ Logo Image URL එකක් ඇතුළත් කරන්න:' : 'Or enter Logo Image URL:'}
+                    </span>
+                    <input 
+                      type="text" 
+                      value={editLogoUrl}
+                      onChange={(e) => setEditLogoUrl(e.target.value)}
+                      placeholder="https://.../my-store-logo.png"
+                      className="w-full p-2 rounded-xl border border-slate-300 text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {editLogoUrl && (
+                    <div className="flex items-center gap-3 p-2 rounded-xl bg-slate-100 border border-slate-200">
+                      <img src={editLogoUrl} alt="Logo Preview" className="w-10 h-10 object-contain rounded-lg bg-white p-1" />
+                      <span className="text-[11px] font-bold text-slate-700">{language === 'si' ? 'ලබාදුන් Logo එක' : 'Selected Logo Preview'}</span>
+                      <button
+                        type="button"
+                        onClick={() => setEditLogoUrl('')}
+                        className="ml-auto text-xs text-rose-600 font-bold hover:underline"
+                      >
+                        {language === 'si' ? 'ඉවත් කරන්න' : 'Remove'}
+                      </button>
+                    </div>
+                  )}
+
                   <span className="text-[10px] text-slate-500 block">
                     {language === 'si' 
                       ? 'හිස්ව තැබුවහොත් StoreWave LK නිල සංකේතය ස්වයංක්‍රීයව පෙන්වනු ඇත.' 

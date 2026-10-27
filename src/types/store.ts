@@ -128,6 +128,22 @@ export interface StoreSettings {
   allowCOD?: boolean;
   courierPartner?: 'koombiyo' | 'domex' | 'prompt_xpress' | 'fardar' | 'certis' | 'self';
   courierAccountNo?: string;
+  dealPacks?: DealPack[];
+}
+
+export interface DealPack {
+  id: string;
+  title: string;
+  slug: string;
+  description: string;
+  priceCap?: number;
+  productIds: string[];
+  affiliateLinks?: string[];
+  aiVideoPrompt?: string;
+  aiScriptSinhala?: string;
+  aiScriptEnglish?: string;
+  aiHashtags?: string;
+  createdAt: string;
 }
 
 export interface MerchantUser {

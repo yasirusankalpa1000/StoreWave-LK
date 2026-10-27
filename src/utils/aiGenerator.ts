@@ -620,3 +620,58 @@ export const DEMO_SAMPLE_LINKS: DemoSampleLink[] = [
     ]
   }
 ];
+
+export interface GeneratedDealPackAI {
+  videoPrompt: string;
+  scriptSinhala: string;
+  scriptEnglish: string;
+  caption: string;
+  hashtags: string;
+}
+
+export async function generateDealPackAIPromptAndScript(
+  packTitle: string,
+  priceCap: number,
+  productNames: string[],
+  storeName: string = 'StoreWave LK'
+): Promise<GeneratedDealPackAI> {
+  const itemsText = productNames.length > 0 ? productNames.join(', ') : 'trending viral items';
+  const priceText = `Rs. ${priceCap.toLocaleString()}`;
+
+  const videoPrompt = `Cinematic 9:16 vertical short-form video for TikTok and Instagram Reels. Aesthetic modern product showcase in clean studio lighting with soft pastel backdrop. Highlighting budget-friendly trending products: ${itemsText}. Bold vibrant on-screen badge displaying 'UNDER ${priceText} in Sri Lanka'. Fast-paced dynamic cuts, clean camera push-in, ultra HD, 60fps commercial aesthetic.`;
+
+  const scriptSinhala = `🎬 [තත්පර 0-3 • Hook]
+"රුපියල් ${priceCap.toLocaleString()}ට අඩුවෙන් මේ වගේ බඩු ගන්න පුළුවන් කිව්වොත් ඔයාලා විශ්වාස කරනවද? 😱"
+
+📦 [තත්පර 4-12 • Showcase]
+"මෙන්න ${storeName} එකෙන් ගෙනාපු සුපිරි Deal Pack එක!
+${productNames.map((n, i) => `👉 ${i + 1}. ${n}`).join('\n')}
+මේ ඔක්කොම රුපියල් ${priceCap.toLocaleString()}ට අඩුවෙන් ලංකාවේ ඕනෑම තැනකට Cash on Delivery හෝ Online ගන්න පුළුවන්!"
+
+🚀 [තත්පර 13-18 • Call to Action]
+"Stock හරිම සීමිතයි, Bio එකේ තියෙන StoreWave LK Link එකෙන් දැන්ම Grab කරගන්න! නැත්නම් ඉවර වෙයි!"`;
+
+  const scriptEnglish = `🎬 [0-3s • Hook]
+"Did you know you can get these viral trending items for under ${priceText} in Sri Lanka? 🤯"
+
+📦 [4-12s • Items]
+"Check out this viral budget bundle on ${storeName}:
+${productNames.map((n, i) => `🔥 ${n}`).join('\n')}
+All under ${priceText} with islandwide fast delivery!"
+
+🚀 [13-18s • CTA]
+"Limited stock available, click the link in our bio to order before it sells out!"`;
+
+  const caption = `🔥 සීමිත තොග පමණයි! රු. ${priceCap.toLocaleString()}ට අඩුවෙන් ගන්න පුළුවන් Viral Gadgets & Items මෙන්න! Bio එකේ Link එකෙන් දැන්ම ගන්න. #StoreWaveLK #SriLanka #TrendingLK`;
+
+  const hashtags = `#StoreWaveLK #SriLankaDeals #BudgetDealsLK #Under${priceCap} #DarazAffiliate #LKA #TikTokShopLK #ViralLanka`;
+
+  return {
+    videoPrompt,
+    scriptSinhala,
+    scriptEnglish,
+    caption,
+    hashtags
+  };
+}
+

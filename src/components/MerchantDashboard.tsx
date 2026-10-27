@@ -33,9 +33,12 @@ import {
   Image as ImageIcon,
   Video,
   Play,
-  Film
+  Film,
+  Flame,
+  Copy,
+  Share2
 } from 'lucide-react';
-import { Product, Order, StoreTheme, StoreSettings, AffiliatePlatform, MerchantUser } from '../types/store';
+import { Product, Order, StoreTheme, StoreSettings, AffiliatePlatform, MerchantUser, DealPack } from '../types/store';
 import { SupportedLanguage, getT } from '../utils/i18n';
 import { 
   generateProductDescriptionAI, 
@@ -43,6 +46,8 @@ import {
   detectPlatformFromUrl,
   autoAnalyzeAndGenerateFromAffiliateLink,
   getCategorySamplePhotos,
+  generateDealPackAIPromptAndScript,
+  GeneratedDealPackAI,
   DEMO_SAMPLE_LINKS, 
   DemoSampleLink 
 } from '../utils/aiGenerator';
@@ -82,8 +87,22 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
 }) => {
   const t = getT(language);
 
-  const [activeTab, setActiveTab] = useState<'sourcing' | 'orders' | 'products' | 'customize' | 'settings'>('sourcing');
+  const [activeTab, setActiveTab] = useState<'sourcing' | 'deal-packs' | 'orders' | 'products' | 'customize' | 'settings'>('sourcing');
   const [linkCopied, setLinkCopied] = useState<boolean>(false);
+
+  // Viral Deals & Budget Bundles state
+  const [packTitle, setPackTitle] = useState<string>('Under Rs. 500 Daily Viral Super Pack');
+  const [packPriceCap, setPackPriceCap] = useState<number>(500);
+  const [packDescription, setPackDescription] = useState<string>(
+    'සීමිත තොග පමණයි! මේ සතියේ වැඩිපුරම අලෙවි වූ බඩු සහ ගැජට් රු. 500ට අඩුවෙන් මෙන්න. Stock ඉවර වෙන්න කලින් දැන්ම ඇණවුම් කරන්න!'
+  );
+  const [packAffiliateLinks, setPackAffiliateLinks] = useState<string>('');
+  const [packSelectedProductIds, setPackSelectedProductIds] = useState<string[]>([]);
+  const [isGeneratingPackAI, setIsGeneratingPackAI] = useState<boolean>(false);
+  const [packAIResult, setPackAIResult] = useState<GeneratedDealPackAI | null>(null);
+  const [copiedScriptType, setCopiedScriptType] = useState<string | null>(null);
+  const [packSavedSuccess, setPackSavedSuccess] = useState<string | null>(null);
+  const [copiedPackId, setCopiedPackId] = useState<string | null>(null);
   
   // New Product Modal state
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
@@ -864,6 +883,21 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
         >
           <Zap className="w-4 h-4 text-amber-500" />
           <span>{t.sourcingStation} 🔥</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('deal-packs')}
+          className={`pb-2.5 relative transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+            activeTab === 'deal-packs' ? 'text-rose-600 border-b-2 border-rose-600 font-black' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Flame className="w-4 h-4 text-rose-500" />
+          <span>{language === 'si' ? '🔥 Deal Bundles (රු. 500)' : '🔥 Deal Bundles'}</span>
+          {(settings.dealPacks?.length || 0) > 0 && (
+            <span className="w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] flex items-center justify-center font-black">
+              {settings.dealPacks?.length}
+            </span>
+          )}
         </button>
 
         <button
@@ -1955,6 +1989,465 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
         </div>
       )}
 
+      {/* Tab: 🔥 Deal Bundles & Budget Packs (Under Rs. 500) */}
+      {activeTab === 'deal-packs' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-gradient-to-r from-rose-950 via-slate-950 to-orange-950 text-white p-5 sm:p-7 rounded-3xl border border-rose-500/30 shadow-xl space-y-3">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 text-xs font-black border border-rose-500/30">
+              <Flame className="w-3.5 h-3.5 text-rose-400" />
+              <span>{language === 'si' ? 'Viral Deals & Budget Packs Hub (Under Rs. 500)' : 'Viral Deals & Budget Bundles'}</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black text-white">
+              {language === 'si' 
+                ? 'සමාජ මාධ්‍ය වීඩියෝ (TikTok / Reels) සඳහා Combo Packs සහ AI Video Prompts හදන්න' 
+                : 'Curate Viral Deal Bundles with AI Video Scripts & Dedicated Links'}
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
+              {language === 'si'
+                ? 'රු. 500ට අඩු (හෝ ඕනෑම මිලක) බඩු එකතු කර Pack එකක් සාදන්න. ඒ සඳහාම වෙන්වූ Dedicated Link එකක් (උදා: ?pack=under-500) ලැබෙන අතර, AI මඟින් Short Video Script සහ CapCut/Kling AI Video Prompts එක ක්ලික් එකෙන් නිර්මාණය කරගත හැක.'
+                : 'Create high-converting budget bundles for social video campaigns. Get a dedicated pack link where visitors only see that pack, plus auto-generated AI short video scripts & prompts.'}
+            </p>
+          </div>
+
+          {/* Builder Form */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 sm:p-7 space-y-5 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-rose-600" />
+                <span>{language === 'si' ? '1. අලුත් Deal Pack එකක් සකස් කරන්න' : '1. Configure Deal Pack'}</span>
+              </h3>
+              <span className="text-[11px] text-slate-500 font-medium">
+                {language === 'si' ? 'ඕනෑම Affiliate Links ගණනක් දැමිය හැක' : 'Unlimited Links Allowed'}
+              </span>
+            </div>
+
+            {/* Pack Title & Price Cap */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              <div className="sm:col-span-2 space-y-1">
+                <label className="font-bold text-slate-800">
+                  {language === 'si' ? 'Pack එකේ මාතෘකාව (Editable Title):' : 'Pack Title (Editable):'}
+                </label>
+                <input 
+                  type="text" 
+                  value={packTitle} 
+                  onChange={(e) => setPackTitle(e.target.value)}
+                  placeholder="e.g. Under Rs. 500 Daily Super Gadget Pack"
+                  className="w-full p-2.5 rounded-xl border border-slate-300 font-bold text-xs focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800">
+                  {language === 'si' ? 'උපරිම මිල සීමාව (Price Cap):' : 'Price Cap (LKR):'}
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 font-bold text-slate-400">Rs.</span>
+                  <input 
+                    type="number" 
+                    value={packPriceCap} 
+                    onChange={(e) => setPackPriceCap(Number(e.target.value))}
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 font-black text-xs text-rose-600 focus:border-rose-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Pack Campaign Headline / Description */}
+            <div className="space-y-1">
+              <label className="font-bold text-slate-800">
+                {language === 'si' ? 'Pack එකේ Campaign විස්තරය (Customer ට පෙනෙන ප්‍රධාන Hook එක):' : 'Pack Campaign Headline & Hook (Shown on Pack Link):'}
+              </label>
+              <textarea 
+                rows={2}
+                value={packDescription}
+                onChange={(e) => setPackDescription(e.target.value)}
+                placeholder="e.g. සීමිත තොග පමණයි! මේ සතියේ වැඩිපුරම අලෙවි වූ බඩු සහ ගැජට් රු. 500ට අඩුවෙන් මෙන්න."
+                className="w-full p-2.5 rounded-xl border border-slate-300 text-xs focus:border-rose-500 focus:outline-none"
+              />
+            </div>
+
+            {/* Multi-Affiliate Links Textarea (Unlimited Links) */}
+            <div className="space-y-1.5 p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200">
+              <div className="flex items-center justify-between">
+                <label className="font-black text-amber-950 text-xs flex items-center gap-1.5">
+                  <LinkIcon className="w-4 h-4 text-amber-700" />
+                  <span>{language === 'si' ? 'Multi Affiliate Links (එක පාර Links ඕනෑම ගණනක් දමන්න):' : 'Bulk Affiliate Links (Paste 1, 2, 5, 10+ Links):'}</span>
+                </label>
+                <span className="text-[10px] text-amber-800 font-bold bg-amber-100 px-2 py-0.5 rounded-full">
+                  {language === 'si' ? 'පේළියකට එක link එකක්' : '1 link per line'}
+                </span>
+              </div>
+              <textarea 
+                rows={3}
+                value={packAffiliateLinks}
+                onChange={(e) => setPackAffiliateLinks(e.target.value)}
+                placeholder="https://www.daraz.lk/products/shoes-...\nhttps://www.amazon.com/dp/B08X...\nhttps://www.aliexpress.com/item/..."
+                className="w-full p-2.5 rounded-xl border border-amber-300 bg-white font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              <p className="text-[10px] text-amber-900">
+                {language === 'si' 
+                  ? '💡 ඔබට Daraz, Amazon, AliExpress හෝ Temu links කැමති ප්‍රමාණයක් එක යට එක Paste කළ හැක.' 
+                  : '💡 Paste any number of Daraz, Amazon, AliExpress or Temu links one below the other.'}
+              </p>
+            </div>
+
+            {/* Select Products from Store */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-slate-800 text-xs">
+                  {language === 'si' ? 'ඔබගේ කඩේ ඇති භාණ්ඩ වලින් මෙම Pack එකට ඇතුළත් කරන්න:' : 'Select Products from your store to include in this bundle:'}
+                </label>
+                <span className="text-[11px] text-indigo-600 font-bold">
+                  {packSelectedProductIds.length} {language === 'si' ? 'තෝරා ඇත' : 'selected'}
+                </span>
+              </div>
+
+              {products.length === 0 ? (
+                <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-300 text-center text-slate-500 text-xs">
+                  {language === 'si' ? 'කඩේ භාණ්ඩ තවම නැත. ඉහතින් Affiliate Links දමා Save කරන්න.' : 'No products in store yet. You can paste affiliate links above.'}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-60 overflow-y-auto p-1 border border-slate-200 rounded-2xl">
+                  {products.map(p => {
+                    const isSelected = packSelectedProductIds.includes(p.id);
+                    return (
+                      <label 
+                        key={p.id}
+                        className={`flex items-center gap-2.5 p-2 rounded-xl border transition cursor-pointer ${
+                          isSelected ? 'bg-rose-50 border-rose-300 ring-1 ring-rose-400' : 'bg-white border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input 
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setPackSelectedProductIds(prev => [...prev, p.id]);
+                            } else {
+                              setPackSelectedProductIds(prev => prev.filter(id => id !== p.id));
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-rose-600 cursor-pointer shrink-0"
+                        />
+                        <img src={p.images[0]} alt={p.title} className="w-10 h-10 object-cover rounded-lg shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-slate-900 truncate text-[11px]">{p.title}</div>
+                          <div className="text-[10px] text-slate-500 font-black">Rs. {p.price.toLocaleString()}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons: Generate AI Video Prompt & Save Deal Pack */}
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsGeneratingPackAI(true);
+                  try {
+                    const selectedProds = products.filter(p => packSelectedProductIds.includes(p.id));
+                    const rawLines = packAffiliateLinks.split('\n').filter(l => l.trim().length > 0);
+                    const prodNames = selectedProds.length > 0 
+                      ? selectedProds.map(p => p.title) 
+                      : (rawLines.length > 0 ? rawLines.map((_, i) => `Trending Viral Item #${i + 1}`) : ['Viral TikTok Gadget', 'Lifestyle Mini Accessory']);
+                    
+                    const res = await generateDealPackAIPromptAndScript(packTitle, packPriceCap, prodNames, settings.storeName);
+                    setPackAIResult(res);
+                  } catch (e) {
+                    console.error(e);
+                  } finally {
+                    setIsGeneratingPackAI(false);
+                  }
+                }}
+                disabled={isGeneratingPackAI}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-700 hover:to-amber-700 text-white font-black text-xs shadow-md transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <Sparkles className={`w-4 h-4 text-amber-200 ${isGeneratingPackAI ? 'animate-spin' : ''}`} />
+                <span>
+                  {isGeneratingPackAI 
+                    ? (language === 'si' ? 'AI ජනනය කරමින් පවතී...' : 'Generating AI Script & Prompt...') 
+                    : (language === 'si' ? '⚡ AI Video Prompt & Script එක ජනනය කරන්න' : '⚡ Generate AI Video Prompt & Script')}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!packTitle.trim()) {
+                    alert('Please enter a Pack Title');
+                    return;
+                  }
+                  const slug = packTitle.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `deal-pack-${Date.now()}`;
+                  const links = packAffiliateLinks.split('\n').map(l => l.trim()).filter(Boolean);
+
+                  const newPack: DealPack = {
+                    id: `pack-${Date.now()}`,
+                    title: packTitle.trim(),
+                    slug: slug,
+                    description: packDescription.trim(),
+                    priceCap: packPriceCap,
+                    productIds: packSelectedProductIds,
+                    affiliateLinks: links,
+                    aiVideoPrompt: packAIResult?.videoPrompt,
+                    aiScriptSinhala: packAIResult?.scriptSinhala,
+                    aiScriptEnglish: packAIResult?.scriptEnglish,
+                    aiHashtags: packAIResult?.hashtags,
+                    createdAt: new Date().toLocaleDateString()
+                  };
+
+                  const existingPacks = settings.dealPacks || [];
+                  const updatedPacks = [newPack, ...existingPacks];
+                  onUpdateSettings({
+                    ...settings,
+                    dealPacks: updatedPacks
+                  });
+                  try {
+                    localStorage.setItem('nextgen_settings', JSON.stringify({
+                      ...settings,
+                      dealPacks: updatedPacks
+                    }));
+                  } catch (e) {}
+
+                  setPackSavedSuccess(slug);
+                  setTimeout(() => setPackSavedSuccess(null), 5000);
+                }}
+                className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer ml-auto"
+              >
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>{language === 'si' ? '💾 Deal Pack එක සුරකින්න (Save Pack)' : '💾 Save Deal Pack'}</span>
+              </button>
+            </div>
+
+            {/* Success Toast */}
+            {packSavedSuccess && (
+              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 space-y-2 animate-in zoom-in-95">
+                <div className="flex items-center gap-2 font-black text-xs">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{language === 'si' ? 'Deal Pack එක සාර්ථකව සුරැකිණි! Dedicated Link එක සූදානම්.' : 'Deal Pack Saved! Dedicated customer link ready.'}</span>
+                </div>
+                <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-emerald-200 font-mono text-[11px] text-emerald-800">
+                  <span className="font-sans font-bold text-slate-500">🔗 Pack Link:</span>
+                  <span className="truncate flex-1 select-all">{`${window.location.origin}/?pack=${packSavedSuccess}&view=buyer`}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = `${window.location.origin}/?pack=${packSavedSuccess}&view=buyer`;
+                      if (navigator.clipboard) {
+                        navigator.clipboard.writeText(url);
+                        alert(language === 'si' ? 'Pack Link එක Copy කරගන්නා ලදී! ✅' : 'Pack Link Copied! ✅');
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg cursor-pointer"
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* AI Result Box: Video Prompt + Scripts + Captions */}
+          {packAIResult && (
+            <div className="bg-gradient-to-b from-indigo-950 to-slate-950 rounded-3xl p-5 sm:p-7 text-white border border-indigo-500/30 shadow-2xl space-y-4 text-xs">
+              <div className="flex items-center justify-between border-b border-indigo-900/60 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <h3 className="text-sm sm:text-base font-black text-white">
+                    {language === 'si' ? '✨ AI ජනනය කළ Video Prompt, Script සහ Caption' : '✨ AI Video Prompts & Social Copy'}
+                  </h3>
+                </div>
+                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                  {language === 'si' ? '🔒 පාරිභෝගිකයාට නොපෙනේ (Merchant Only)' : 'Merchant Private Tool'}
+                </span>
+              </div>
+
+              {/* Notice */}
+              <div className="p-3 rounded-2xl bg-indigo-900/40 border border-indigo-700/40 text-[11px] text-indigo-200 leading-relaxed">
+                {language === 'si' 
+                  ? '🔒 මතක් කිරීම: මෙම AI Video Prompt එක සහ Script එක ඔබේ ප්‍රයෝජනය සඳහා පමණි (CapCut AI / Kling / Sora වෙත ලබාදී වීඩියෝවක් සාදා ගැනීමට). මෙය Store එකේ පාරිභෝගිකයින්ට කිසිසේත්ම නොපෙනේ!'
+                  : '🔒 Private Notice: This AI prompt and script is strictly for you to produce short-form videos with CapCut AI or Kling. It is completely hidden from customers visiting your store.'}
+              </div>
+
+              {/* 1. AI Video Generator Prompt */}
+              <div className="space-y-1.5 p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="font-black text-amber-400 text-xs flex items-center gap-1.5">
+                    <Video className="w-3.5 h-3.5" />
+                    <span>AI Video Prompt (for Kling / Sora / CapCut AI):</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(packAIResult.videoPrompt);
+                      setCopiedScriptType('videoPrompt');
+                      setTimeout(() => setCopiedScriptType(null), 2000);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] flex items-center gap-1 cursor-pointer transition"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>{copiedScriptType === 'videoPrompt' ? 'Copied! ✅' : 'Copy Prompt'}</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-300 font-mono bg-slate-950 p-2.5 rounded-xl border border-slate-800 leading-relaxed select-all">
+                  {packAIResult.videoPrompt}
+                </p>
+              </div>
+
+              {/* 2. Sinhala Script */}
+              <div className="space-y-1.5 p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="font-black text-emerald-400 text-xs flex items-center gap-1.5">
+                    <span>🎬 සිංහල Video Script (Hook + Showcase + Call to Action):</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(packAIResult.scriptSinhala);
+                      setCopiedScriptType('sinhala');
+                      setTimeout(() => setCopiedScriptType(null), 2000);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] flex items-center gap-1 cursor-pointer transition"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>{copiedScriptType === 'sinhala' ? 'Copied! ✅' : 'Copy Script'}</span>
+                  </button>
+                </div>
+                <pre className="text-[11px] text-slate-200 font-sans whitespace-pre-wrap bg-slate-950 p-2.5 rounded-xl border border-slate-800 leading-relaxed">
+                  {packAIResult.scriptSinhala}
+                </pre>
+              </div>
+
+              {/* 3. English Script & Caption */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5 p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-indigo-300 text-[11px]">English Script:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(packAIResult.scriptEnglish);
+                        setCopiedScriptType('english');
+                        setTimeout(() => setCopiedScriptType(null), 2000);
+                      }}
+                      className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold"
+                    >
+                      {copiedScriptType === 'english' ? 'Copied! ✅' : 'Copy'}
+                    </button>
+                  </div>
+                  <pre className="text-[10px] text-slate-300 font-sans whitespace-pre-wrap bg-slate-950 p-2 rounded-xl">
+                    {packAIResult.scriptEnglish}
+                  </pre>
+                </div>
+
+                <div className="space-y-1.5 p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-amber-300 text-[11px]">Caption & Hashtags:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cap = `${packAIResult.caption}\n\n${packAIResult.hashtags}`;
+                        navigator.clipboard?.writeText(cap);
+                        setCopiedScriptType('caption');
+                        setTimeout(() => setCopiedScriptType(null), 2000);
+                      }}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 font-bold"
+                    >
+                      {copiedScriptType === 'caption' ? 'Copied! ✅' : 'Copy'}
+                    </button>
+                  </div>
+                  <div className="text-[10px] text-slate-300 bg-slate-950 p-2 rounded-xl space-y-1">
+                    <p>{packAIResult.caption}</p>
+                    <p className="text-indigo-400 font-mono text-[9px]">{packAIResult.hashtags}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Saved Deal Packs List */}
+          <div className="space-y-3">
+            <h3 className="font-black text-slate-900 text-sm sm:text-base">
+              {language === 'si' ? 'ඔබ සාදා ඇති Deal Packs (Saved Bundles):' : 'Your Saved Deal Packs:'}
+            </h3>
+
+            {(!settings.dealPacks || settings.dealPacks.length === 0) ? (
+              <div className="p-6 rounded-3xl bg-white border border-slate-200 text-center text-slate-500 text-xs">
+                {language === 'si' ? 'තවම Deal Packs සාදා නැත. ඉහත පෝරමයෙන් ඔබේ පළමු Pack එක සාදන්න!' : 'No Deal Packs created yet. Use the builder above.'}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {settings.dealPacks.map(pack => {
+                  const packPublicUrl = typeof window !== 'undefined'
+                    ? `${window.location.origin}/?pack=${pack.slug}&view=buyer`
+                    : `/?pack=${pack.slug}&view=buyer`;
+
+                  return (
+                    <div key={pack.id} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3 shadow-xs hover:border-slate-300 transition">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 font-black text-[9px] uppercase">
+                            <Flame className="w-2.5 h-2.5" />
+                            <span>Under Rs. {pack.priceCap?.toLocaleString() || 500}</span>
+                          </div>
+                          <h4 className="font-black text-slate-900 text-sm mt-1">{pack.title}</h4>
+                          <p className="text-slate-500 text-[11px] line-clamp-2 mt-0.5">{pack.description}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm(language === 'si' ? 'මෙම Deal Pack එක ඉවත් කරන්නද?' : 'Delete this deal pack?')) {
+                              const updated = (settings.dealPacks || []).filter(p => p.id !== pack.id);
+                              onUpdateSettings({ ...settings, dealPacks: updated });
+                            }
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                          title="Delete pack"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Direct Link Box */}
+                      <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2 text-[11px]">
+                        <span className="truncate font-mono text-slate-600 font-medium">{packPublicUrl}</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (navigator.clipboard) {
+                                navigator.clipboard.writeText(packPublicUrl);
+                                setCopiedPackId(pack.id);
+                                setTimeout(() => setCopiedPackId(null), 2000);
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] cursor-pointer"
+                          >
+                            {copiedPackId === pack.id ? 'Copied! ✅' : 'Copy Link'}
+                          </button>
+                          <a
+                            href={packPublicUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 cursor-pointer"
+                            title="Open pack"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Tab: Orders & Bank Slips */}
       {activeTab === 'orders' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden p-4 sm:p-6 space-y-4">
@@ -2189,6 +2682,64 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 className="w-full p-2.5 rounded-xl border border-slate-300"
               />
             </div>
+
+            {/* Banner Photo Direct Upload from Phone / PC Gallery */}
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-slate-800 text-xs">
+                  {language === 'si' ? 'ප්‍රධාන බැනර් පින්තූරය (Hero Banner Photo):' : 'Hero Banner Photo:'}
+                </label>
+                <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                  {language === 'si' ? '📁 Gallery එකෙන් තෝරන්න' : 'Direct Upload'}
+                </span>
+              </div>
+
+              {/* Direct File Picker */}
+              <label className="flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 font-bold text-xs cursor-pointer transition">
+                <ImageIcon className="w-4 h-4 text-indigo-600" />
+                <span>{language === 'si' ? '📱 ෆෝන් එකෙන් / PC එකෙන් බැනර් පින්තූරයක් තෝරන්න' : '📱 Choose Banner Image from Device Gallery'}</span>
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        if (ev.target?.result) {
+                          onUpdateTheme({ ...theme, bannerImage: ev.target.result as string });
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
+              </label>
+
+              <div className="space-y-1">
+                <span className="text-[10px] text-slate-500 font-medium block">
+                  {language === 'si' ? 'හෝ පින්තූරයේ URL Link එකක් ඇතුළත් කරන්න:' : 'Or enter Image URL:'}
+                </span>
+                <input 
+                  type="text" 
+                  value={theme.bannerImage} 
+                  onChange={(e) => onUpdateTheme({ ...theme, bannerImage: e.target.value })}
+                  placeholder="https://images.unsplash.com/..."
+                  className="w-full p-2.5 rounded-xl border border-slate-300 font-mono text-xs"
+                />
+              </div>
+
+              {theme.bannerImage && (
+                <div className="relative rounded-2xl overflow-hidden h-32 border border-slate-200 shadow-xs">
+                  <img src={theme.bannerImage} alt="Banner Preview" className="w-full h-full object-cover" />
+                  <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[9px] px-2 py-0.5 rounded font-bold">
+                    Banner Preview
+                  </span>
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => {
                 try {
@@ -2235,17 +2786,67 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 />
               </div>
             </div>
-            <div className="space-y-1">
-              <label className="font-bold text-slate-800">
-                {language === 'si' ? 'Custom Logo Image URL (විකල්පයි):' : 'Logo Image URL (Optional):'}
+
+            {/* Custom Logo with Phone / PC Gallery Direct Upload */}
+            <div className="space-y-2 pt-1 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-slate-800">
+                  {language === 'si' ? 'කඩේ ලාංඡනය (Custom Store Logo):' : 'Custom Store Logo:'}
+                </label>
+                <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                  {language === 'si' ? '📁 Gallery එකෙන් තෝරන්න' : 'Direct Upload'}
+                </span>
+              </div>
+
+              {/* Direct File Picker */}
+              <label className="flex items-center justify-center gap-2 p-2.5 rounded-xl border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 font-bold text-xs cursor-pointer transition">
+                <ImageIcon className="w-4 h-4 text-indigo-600" />
+                <span>{language === 'si' ? '📱 ෆෝන් එකෙන් / PC එකෙන් Logo එකක් තෝරන්න' : '📱 Choose Logo Image from Gallery'}</span>
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        if (ev.target?.result) {
+                          onUpdateSettings({ ...settings, logoUrl: ev.target.result as string });
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
               </label>
-              <input 
-                type="text" 
-                placeholder="https://.../logo.png"
-                value={settings.logoUrl || ''} 
-                onChange={(e) => onUpdateSettings({ ...settings, logoUrl: e.target.value })}
-                className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-mono"
-              />
+
+              <div className="space-y-1">
+                <span className="text-[10px] text-slate-500 font-medium block">
+                  {language === 'si' ? 'හෝ Logo Image URL එකක් ඇතුළත් කරන්න:' : 'Or enter Logo Image URL:'}
+                </span>
+                <input 
+                  type="text" 
+                  placeholder="https://.../logo.png"
+                  value={settings.logoUrl || ''} 
+                  onChange={(e) => onUpdateSettings({ ...settings, logoUrl: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-mono"
+                />
+              </div>
+
+              {settings.logoUrl && (
+                <div className="flex items-center gap-3 p-2 rounded-xl bg-slate-50 border border-slate-200">
+                  <img src={settings.logoUrl} alt="Store Logo" className="w-10 h-10 object-contain rounded-lg bg-white p-1" />
+                  <span className="text-[11px] font-bold text-slate-700">{language === 'si' ? 'ලබාදුන් Logo එක' : 'Selected Logo Preview'}</span>
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ ...settings, logoUrl: undefined })}
+                    className="ml-auto text-xs text-rose-600 font-bold hover:underline"
+                  >
+                    {language === 'si' ? 'ඉවත් කරන්න' : 'Remove'}
+                  </button>
+                </div>
+              )}
             </div>
             <div className="space-y-1">
               <label className="font-bold text-slate-800">

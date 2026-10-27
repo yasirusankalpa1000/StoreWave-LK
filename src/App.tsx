@@ -151,7 +151,7 @@ export default function App() {
   const [isPublicBuyerView, setIsPublicBuyerView] = useState<boolean>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
-      return !!params.get('store') || params.get('view') === 'buyer';
+      return !!params.get('store') || params.get('view') === 'buyer' || !!params.get('pack') || !!params.get('product');
     } catch (e) {
       return false;
     }
@@ -176,14 +176,16 @@ export default function App() {
   // Blank Canvas option for new store creators
   const [startWithBlankCanvas, setStartWithBlankCanvas] = useState<boolean>(false);
 
-  // Boot: Sync with URL parameter (?store=slug) and Cloud Firestore
+  // Boot: Sync with URL parameter (?store=slug, ?pack=slug, ?product=id) and Cloud Firestore
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const storeParam = params.get('store');
       const viewParam = params.get('view');
+      const packParam = params.get('pack');
+      const productParam = params.get('product');
 
-      if (storeParam || viewParam === 'buyer') {
+      if (storeParam || viewParam === 'buyer' || packParam || productParam) {
         setIsPublicBuyerView(true);
       }
 
@@ -700,6 +702,8 @@ export default function App() {
               onUpdateSettings={handleUpdateSettings}
               isOwnerMode={!!loggedInUser && !isPublicBuyerView}
               isPublicBuyer={!loggedInUser || isPublicBuyerView}
+              onOpenLogin={() => setIsLoginModalOpen(true)}
+              onOpenDashboard={() => setCurrentMode('merchant')}
             />
 
             {/* Bottom Navigation Switcher for Store Owner (Only shown when merchant is logged in) */}
@@ -821,6 +825,11 @@ export default function App() {
               <X className="w-5 h-5 text-slate-500" />
             </button>
 
+            {/* StoreWave LK Official Brand Logo */}
+            <div className="flex justify-center pt-1 pb-1">
+              <StoreWaveLogo size="md" variant="full" showBadge={true} />
+            </div>
+
             <div>
               <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-bold uppercase tracking-wider text-[10px]">
                 {t.startFreeTrial}
@@ -939,6 +948,11 @@ export default function App() {
             >
               <X className="w-5 h-5 text-slate-500" />
             </button>
+
+            {/* StoreWave LK Official Brand Logo */}
+            <div className="flex justify-center pt-1 pb-1">
+              <StoreWaveLogo size="md" variant="full" showBadge={true} />
+            </div>
 
             <div>
               <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold uppercase tracking-wider text-[10px]">
