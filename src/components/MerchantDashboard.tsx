@@ -47,9 +47,13 @@ import {
   autoAnalyzeAndGenerateFromAffiliateLink,
   getCategorySamplePhotos,
   generateDealPackAIPromptAndScript,
+  generateSingleProductVideoPromptAndScript,
+  extractPastedDetails,
   GeneratedDealPackAI,
   DEMO_SAMPLE_LINKS, 
-  DemoSampleLink 
+  DemoSampleLink,
+  isInvalidProductTitle,
+  getDefaultCleanProductTitle
 } from '../utils/aiGenerator';
 
 interface MerchantDashboardProps {
@@ -103,6 +107,32 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   const [copiedScriptType, setCopiedScriptType] = useState<string | null>(null);
   const [packSavedSuccess, setPackSavedSuccess] = useState<string | null>(null);
   const [copiedPackId, setCopiedPackId] = useState<string | null>(null);
+
+  // Single Product Video AI Prompt & Script state
+  const [singleVideoAIResult, setSingleVideoAIResult] = useState<GeneratedDealPackAI | null>(null);
+  const [isGeneratingSingleVideoAI, setIsGeneratingSingleVideoAI] = useState<boolean>(false);
+  const [isSingleVideoModalOpen, setIsSingleVideoModalOpen] = useState<boolean>(false);
+  const [activeVideoProductTitle, setActiveVideoProductTitle] = useState<string>('');
+  const [activeVideoProductPrice, setActiveVideoProductPrice] = useState<number>(0);
+  const [activeVideoProductCategory, setActiveVideoProductCategory] = useState<string>('');
+
+  const handleOpenSingleProductVideoAI = async (productTitle: string, price: number, category: string = 'Electronics') => {
+    const cleanTitle = productTitle.trim() || 'Trending Viral Item';
+    const cleanPrice = price || 240;
+    setActiveVideoProductTitle(cleanTitle);
+    setActiveVideoProductPrice(cleanPrice);
+    setActiveVideoProductCategory(category);
+    setIsSingleVideoModalOpen(true);
+    setIsGeneratingSingleVideoAI(true);
+    try {
+      const res = await generateSingleProductVideoPromptAndScript(cleanTitle, cleanPrice, category, settings.storeName);
+      setSingleVideoAIResult(res);
+    } catch (e) {
+      console.error('Failed to generate product video script:', e);
+    } finally {
+      setIsGeneratingSingleVideoAI(false);
+    }
+  };
   
   // New Product Modal state
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
@@ -126,7 +156,25 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   const [isVideoUploading, setIsVideoUploading] = useState<boolean>(false);
   const [isDigital, setIsDigital] = useState(false);
   const [newFulfillmentType, setNewFulfillmentType] = useState<'affiliate' | 'dropship_margin' | 'physical_stock'>('dropship_margin');
+  const [manualAffiliateUrl, setManualAffiliateUrl] = useState<string>('');
+  const [assignToPackId, setAssignToPackId] = useState<string>('none');
+  const [newPackNameForProduct, setNewPackNameForProduct] = useState<string>('');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+
+  // Step 1 Choice in Add Modal: 'single' (Single Product) vs 'pack' (Deal Pack / Bundle)
+  const [creationType, setCreationType] = useState<'single' | 'pack'>('single');
+  const [packCreationMode, setPackCreationMode] = useState<'affiliate' | 'custom'>('affiliate');
+  const [modalPackLinks, setModalPackLinks] = useState<string>('');
+  const [modalPackTitle, setModalPackTitle] = useState<string>('');
+  const [modalPackPriceCap, setModalPackPriceCap] = useState<number>(500);
+  const [modalPackDescription, setModalPackDescription] = useState<string>('');
+  const [modalPackSelectedProds, setModalPackSelectedProds] = useState<string[]>([]);
+  const [modalPackAIResult, setModalPackAIResult] = useState<GeneratedDealPackAI | null>(null);
+  const [isAnalyzingModalPack, setIsAnalyzingModalPack] = useState<boolean>(false);
+
+  // Edit Existing Deal Pack state
+  const [editingDealPack, setEditingDealPack] = useState<DealPack | null>(null);
+  const [isRegeneratingPackAI, setIsRegeneratingPackAI] = useState<boolean>(false);
 
   // 1-Click Sourcing & Importer state
   const [importSource, setImportSource] = useState<AffiliatePlatform>('daraz');
@@ -273,12 +321,12 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   const { sellPrice, pocketProfit, marginPct, comparePrice } = calculateFinalPriceAndProfit();
 
   // Intelligent Affiliate Auto-Analysis & Description Generation
-  const runAutoAffiliateAnalysis = async (urlToAnalyze: string) => {
+  const runAutoAffiliateAnalysis = async (urlToAnalyze: string, manualTitle?: string, manualPrice?: number) => {
     if (!urlToAnalyze || urlToAnalyze.trim().length < 8) return;
     setIsAutoAnalyzingAffiliate(true);
     setAutoAnalyzedNotice(language === 'si' ? '🤖 AI භාණ්ඩය හඳුනාගෙන සුපිරි විස්තරය ස්වයංක්‍රීයව ලියමින් පවතී...' : '🤖 AI identifying product & writing sales copy...');
     try {
-      const result = await autoAnalyzeAndGenerateFromAffiliateLink(urlToAnalyze.trim(), language);
+      const result = await autoAnalyzeAndGenerateFromAffiliateLink(urlToAnalyze.trim(), language, manualTitle, manualPrice);
       setImportedTitle(result.title);
       setImportedCategory(result.category);
       setImportSource(result.platform);
@@ -301,19 +349,33 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     }
   };
 
-  // Auto-parse URL when pasted into importer
-  const handleUrlChange = (url: string) => {
-    setImportUrl(url);
-    if (url.trim().length > 8) {
-      const extracted = extractTitleFromUrl(url);
-      setImportedTitle(extracted);
-      const plat = detectPlatformFromUrl(url);
-      setImportSource(plat);
+  // Auto-parse URL when pasted into importer (supports direct link or copied text with title & price)
+  const handleUrlChange = (input: string) => {
+    const parsed = extractPastedDetails(input);
+    const urlToUse = parsed.url || input.trim();
+    setImportUrl(urlToUse);
 
-      // Auto-trigger analysis if valid web link pasted
-      if (url.startsWith('http://') || url.startsWith('https://')) {
-        runAutoAffiliateAnalysis(url);
+    let titleToUse = !isInvalidProductTitle(parsed.pastedTitle) ? (parsed.pastedTitle || '') : '';
+    if (titleToUse) {
+      setImportedTitle(titleToUse);
+    } else {
+      const extracted = extractTitleFromUrl(urlToUse);
+      if (extracted && !isInvalidProductTitle(extracted)) {
+        setImportedTitle(extracted);
+        titleToUse = extracted;
       }
+    }
+
+    if (parsed.pastedPrice) {
+      setImportedBuyCost(parsed.pastedPrice);
+    }
+
+    const plat = detectPlatformFromUrl(urlToUse);
+    setImportSource(plat);
+
+    // Auto-trigger analysis if valid web link pasted
+    if (urlToUse.startsWith('http://') || urlToUse.startsWith('https://')) {
+      runAutoAffiliateAnalysis(urlToUse, titleToUse || undefined, parsed.pastedPrice);
     }
   };
 
@@ -353,13 +415,15 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     if (!urlToAnalyze || urlToAnalyze.trim().length < 8) return;
     setIsQuickAnalyzingModal(true);
     try {
+      setManualAffiliateUrl(urlToAnalyze.trim());
       const result = await autoAnalyzeAndGenerateFromAffiliateLink(urlToAnalyze.trim(), language);
       setNewTitle(result.title);
       setNewCategory(result.category);
-      setNewCostPrice(result.estimatedBuyCost);
-      setNewProfitAmount(result.suggestedProfit);
-      setNewPrice(result.estimatedBuyCost + result.suggestedProfit);
-      setNewComparePrice(Math.round((result.estimatedBuyCost + result.suggestedProfit) * 1.3));
+      const retailPrice = result.estimatedBuyCost || 240;
+      setNewCostPrice(retailPrice);
+      setNewProfitAmount(0);
+      setNewPrice(retailPrice);
+      setNewComparePrice(Math.round(retailPrice * 1.3));
       setNewDescription(result.description);
       setNewImages(result.images && result.images.length > 0 ? result.images : [result.imageUrl]);
       setActiveManualMediaIndex(0);
@@ -375,7 +439,11 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
 
   // Generate AI Description for Importer
   const handleGenerateImportAIDescription = async () => {
-    const titleToUse = importedTitle.trim() || extractTitleFromUrl(importUrl) || 'Trending Lifestyle Gadget';
+    let titleToUse = importedTitle.trim();
+    if (isInvalidProductTitle(titleToUse)) {
+      const extracted = extractTitleFromUrl(importUrl);
+      titleToUse = (!isInvalidProductTitle(extracted) ? extracted : '') || getDefaultCleanProductTitle(importedCategory, importUrl);
+    }
     setIsGeneratingImportAI(true);
     try {
       const text = await generateProductDescriptionAI(titleToUse, importedCategory, importSource, language);
@@ -496,13 +564,16 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     }
 
     setIsImporting(true);
-    const title = importedTitle.trim() || extractTitleFromUrl(importUrl);
-    const buyCost = importedBuyCost || 1800;
-    const finalPrice = sellPrice || Math.round(buyCost * 1.5);
+    const title = importedTitle.trim() || extractTitleFromUrl(importUrl) || 'Trending Sourced Product';
+    const buyCost = importedBuyCost || 240;
+    
+    // In affiliate mode, price is the exact retail price on Daraz/partner site, profit comes from commission
+    const isAffiliate = importFulfillmentType === 'affiliate';
+    const finalPrice = isAffiliate ? buyCost : (sellPrice || Math.round(buyCost * 1.5));
     const finalCompare = comparePrice || Math.round(finalPrice * 1.3);
     const finalImages = importedImages.length > 0 
       ? importedImages 
-      : (importedImageUrl.trim() ? [importedImageUrl.trim()] : ['https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=800&q=80']);
+      : (importedImageUrl.trim() ? [importedImageUrl.trim()] : ['https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=800&q=80']);
     const description = importedDescription || `🔥 ${title}\n\n• Verified direct from ${importSource.toUpperCase()}.\n• High quality build & ergonomic design.\n• Express islandwide delivery available with buyer protection.`;
 
     // Construct affiliate tracking link
@@ -521,8 +592,8 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
       price: finalPrice,
       compareAtPrice: finalCompare,
       costPrice: buyCost,
-      customProfitAmount: pocketProfit,
-      customProfitPercent: marginPct,
+      customProfitAmount: isAffiliate ? 0 : pocketProfit,
+      customProfitPercent: isAffiliate ? 0 : marginPct,
       images: finalImages,
       videoUrl: importedVideoUrl.trim() || undefined,
       category: importedCategory,
@@ -530,7 +601,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
       importedFrom: importSource,
       sourceUrl: importUrl,
       affiliateUrl: finalAffiliateUrl,
-      affiliateCommission: `Rs. ${pocketProfit.toLocaleString()} (${marginPct}% Profit)`,
+      affiliateCommission: isAffiliate ? '4% - 12% (Daraz Commission)' : `Rs. ${pocketProfit.toLocaleString()} (${marginPct}% Profit)`,
       tags: [`${importSource.toUpperCase()} Hot Deal`, 'Affiliate Sourced'],
       fulfillmentType: importFulfillmentType,
       codAvailable: importFulfillmentType === 'affiliate',
@@ -569,25 +640,31 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
       ? newImages 
       : (newImageUrl.trim() ? [newImageUrl.trim()] : getCategorySamplePhotos(newCategory));
 
+    const isAffiliate = newFulfillmentType === 'affiliate';
+    const finalProdPrice = isAffiliate ? newCostPrice || newPrice : finalSellPrice;
+
     const newProd: Product = {
       id: `prod-${Date.now()}`,
       title: newTitle,
       category: newCategory,
-      price: finalSellPrice,
-      compareAtPrice: newComparePrice || Math.round(finalSellPrice * 1.25),
+      price: finalProdPrice,
+      compareAtPrice: newComparePrice || Math.round(finalProdPrice * 1.25),
       costPrice: newCostPrice,
-      customProfitAmount: newProfitAmount,
-      customProfitPercent: newCostPrice > 0 ? Math.round((newProfitAmount / newCostPrice) * 100) : 50,
+      customProfitAmount: isAffiliate ? 0 : newProfitAmount,
+      customProfitPercent: isAffiliate ? 0 : (newCostPrice > 0 ? Math.round((newProfitAmount / newCostPrice) * 100) : 50),
       stock: newStock,
       description: newDescription || 'Premium lifestyle item with fast shipping.',
       images: finalImages,
       videoUrl: newVideoUrl.trim() || undefined,
       isDigital,
       fulfillmentType: newFulfillmentType,
-      codAvailable: newFulfillmentType === 'physical_stock',
+      codAvailable: isAffiliate || newFulfillmentType === 'physical_stock',
+      sourceUrl: manualAffiliateUrl || undefined,
+      affiliateUrl: manualAffiliateUrl || undefined,
+      affiliateCommission: isAffiliate ? '4% - 12% (Daraz Commission)' : `Rs. ${newProfitAmount.toLocaleString()} Profit`,
       rating: 5.0,
       reviewCount: 1,
-      tags: ['New Arrival'],
+      tags: isAffiliate ? ['Daraz Affiliate', 'Trending Deal'] : ['New Arrival'],
       variants: {
         size: isDigital ? [] : ['M', 'L'],
         color: isDigital ? [] : ['Standard']
@@ -600,8 +677,51 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
       localStorage.setItem('nextgen_products', JSON.stringify(updated));
     } catch (e) {}
 
+    // Deal Pack Auto-Assignment or Creation
+    if (assignToPackId !== 'none') {
+      let updatedPacks = [...(settings.dealPacks || [])];
+      if (assignToPackId === 'new' && newPackNameForProduct.trim()) {
+        const slug = newPackNameForProduct.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `deal-pack-${Date.now()}`;
+        const newPack: DealPack = {
+          id: `pack-${Date.now()}`,
+          title: newPackNameForProduct.trim(),
+          slug,
+          description: `Curated Deal Pack combo featuring ${newTitle}.`,
+          priceCap: 500,
+          productIds: [newProd.id],
+          affiliateLinks: manualAffiliateUrl ? [manualAffiliateUrl] : [],
+          createdAt: new Date().toLocaleDateString()
+        };
+        updatedPacks = [newPack, ...updatedPacks];
+      } else {
+        updatedPacks = updatedPacks.map(p => {
+          if (p.id === assignToPackId) {
+            return {
+              ...p,
+              productIds: Array.from(new Set([...p.productIds, newProd.id])),
+              affiliateLinks: manualAffiliateUrl ? Array.from(new Set([...(p.affiliateLinks || []), manualAffiliateUrl])) : (p.affiliateLinks || [])
+            };
+          }
+          return p;
+        });
+      }
+      onUpdateSettings({
+        ...settings,
+        dealPacks: updatedPacks
+      });
+      try {
+        localStorage.setItem('nextgen_settings', JSON.stringify({
+          ...settings,
+          dealPacks: updatedPacks
+        }));
+      } catch (e) {}
+    }
+
     setIsAddProductOpen(false);
     setNewTitle('');
+    setManualAffiliateUrl('');
+    setAssignToPackId('none');
+    setNewPackNameForProduct('');
     setNewDescription('');
     setNewImageUrl('');
     setNewImages([]);
@@ -611,6 +731,127 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
     setManualPhotoInputUrl('');
     setShowUrlImageInput(false);
     setShowUrlVideoInput(false);
+  };
+
+  // Analyze multiple links and generate AI prompt & script for Deal Pack inside Add modal
+  const handleAnalyzeModalDealPack = async () => {
+    setIsAnalyzingModalPack(true);
+    try {
+      const rawLines = modalPackLinks.split('\n').map(l => l.trim()).filter(Boolean);
+      const detectedTitles: string[] = [];
+      for (const line of rawLines) {
+        const title = extractTitleFromUrl(line);
+        if (title) detectedTitles.push(title);
+      }
+      const finalNames = detectedTitles.length > 0 
+        ? detectedTitles 
+        : (rawLines.length > 0 ? rawLines.map((_, i) => `Trending Budget Item #${i + 1}`) : ['Earphones', 'Mini Accessories', 'Smart Gadget']);
+      
+      const titleToUse = modalPackTitle.trim() || `රු. ${modalPackPriceCap}ට අඩු Super Combo Deal`;
+      setModalPackTitle(titleToUse);
+      if (!modalPackDescription.trim()) {
+        setModalPackDescription(`රුපියල් ${modalPackPriceCap}ට අඩුවෙන් ලංකාවටම Cash on Delivery සහිතව ලබාගත හැකි Hot Deals Bundle එක.`);
+      }
+
+      const ai = await generateDealPackAIPromptAndScript(titleToUse, modalPackPriceCap, finalNames, settings.storeName);
+      setModalPackAIResult(ai);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsAnalyzingModalPack(false);
+    }
+  };
+
+  // Save Deal Pack created from within Add modal
+  const handleSaveModalDealPack = (e: React.FormEvent) => {
+    e.preventDefault();
+    const title = modalPackTitle.trim() || `Deal Pack • Under Rs. ${modalPackPriceCap}`;
+    const slug = title.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `deal-pack-${Date.now()}`;
+    const links = modalPackLinks.split('\n').map(l => l.trim()).filter(Boolean);
+
+    const newPack: DealPack = {
+      id: `pack-${Date.now()}`,
+      title,
+      slug,
+      description: modalPackDescription.trim() || `Curated Deal Pack with items under Rs. ${modalPackPriceCap}.`,
+      priceCap: modalPackPriceCap,
+      productIds: modalPackSelectedProds,
+      affiliateLinks: links,
+      aiVideoPrompt: modalPackAIResult?.videoPrompt,
+      aiScriptSinhala: modalPackAIResult?.scriptSinhala,
+      aiScriptEnglish: modalPackAIResult?.scriptEnglish,
+      aiHashtags: modalPackAIResult?.hashtags,
+      createdAt: new Date().toLocaleDateString()
+    };
+
+    const existingPacks = settings.dealPacks || [];
+    const updatedPacks = [newPack, ...existingPacks];
+    onUpdateSettings({
+      ...settings,
+      dealPacks: updatedPacks
+    });
+    try {
+      localStorage.setItem('nextgen_settings', JSON.stringify({
+        ...settings,
+        dealPacks: updatedPacks
+      }));
+    } catch (err) {}
+
+    setIsAddProductOpen(false);
+    setModalPackTitle('');
+    setModalPackLinks('');
+    setModalPackDescription('');
+    setModalPackSelectedProds([]);
+    setModalPackAIResult(null);
+    alert(language === 'si' ? `"${title}" සාර්ථකව සුරැකිණි!` : `Deal Pack "${title}" saved successfully!`);
+  };
+
+  // Regenerate video prompt and script for existing Deal Pack being edited
+  const handleRegenerateEditedDealPackAI = async () => {
+    if (!editingDealPack) return;
+    setIsRegeneratingPackAI(true);
+    try {
+      const names: string[] = [];
+      for (const link of (editingDealPack.affiliateLinks || [])) {
+        const t = extractTitleFromUrl(link);
+        if (t) names.push(t);
+      }
+      for (const pid of (editingDealPack.productIds || [])) {
+        const prod = products.find(p => p.id === pid);
+        if (prod) names.push(prod.title);
+      }
+      const finalNames = names.length > 0 ? names : ['Trending Sourced Products'];
+      const res = await generateDealPackAIPromptAndScript(editingDealPack.title, editingDealPack.priceCap || 500, finalNames, settings.storeName);
+      setEditingDealPack({
+        ...editingDealPack,
+        aiVideoPrompt: res.videoPrompt,
+        aiScriptSinhala: res.scriptSinhala,
+        aiScriptEnglish: res.scriptEnglish,
+        aiHashtags: res.hashtags
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsRegeneratingPackAI(false);
+    }
+  };
+
+  // Save changes to edited Deal Pack
+  const handleSaveEditedDealPack = () => {
+    if (!editingDealPack) return;
+    const updated = (settings.dealPacks || []).map(p => p.id === editingDealPack.id ? editingDealPack : p);
+    onUpdateSettings({
+      ...settings,
+      dealPacks: updated
+    });
+    try {
+      localStorage.setItem('nextgen_settings', JSON.stringify({
+        ...settings,
+        dealPacks: updated
+      }));
+    } catch (e) {}
+    setEditingDealPack(null);
+    alert(language === 'si' ? 'Deal Pack එක සාර්ථකව යාවත්කාලීන විය!' : 'Deal pack updated successfully!');
   };
 
   // Delete product - in-app confirmation modal
@@ -707,7 +948,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   });
 
   return (
-    <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8 space-y-5 sm:space-y-6">
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8 space-y-5 sm:space-y-6 pb-32 sm:pb-16">
       {/* Top Header Card */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 sm:p-6 rounded-3xl border border-slate-200 shadow-xs">
         <div>
@@ -1133,6 +1374,39 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
             </div>
           </div>
 
+          {/* 🔥 UNMISSABLE HERO BANNER: Create Budget Deal Pack (Under Rs. 500) */}
+          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-rose-600 via-orange-600 to-amber-600 text-white shadow-md space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-white font-black text-[10px] uppercase tracking-wider">
+                    {language === 'si' ? '🔥 විශේෂාංගය • TikTok & Reels Budget Deals' : '🔥 Deal Bundles (Under Rs. 500)'}
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-amber-300 animate-ping"></span>
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-white">
+                  {language === 'si' 
+                    ? 'රු. 500ට අඩු බඩු කිහිපයක් එකතු කර Super Deal Pack එකක් හදන්න!' 
+                    : 'Create a Budget Deal Pack (Under Rs. 500 Bundle)'}
+                </h3>
+                <p className="text-xs text-rose-100 max-w-2xl leading-relaxed">
+                  {language === 'si'
+                    ? 'TikTok / Reels වීඩියෝවක් දමා "රු. 500ට අඩුවෙන් මේ බඩු ටික ගන්න" කියා Promote කරන්න. එක් එක් Pack එක සඳහා පාරිභෝගිකයාට පමණක් පෙනෙන Dedicated Link එකක් සහ Kling / Sora / CapCut AI වීඩියෝ Prompts ලැබේ!'
+                    : 'Bundle multiple low-cost affiliate items under Rs. 500. Get a dedicated customer link and automated TikTok AI video scripts!'}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('deal-packs')}
+                className="px-5 py-3 rounded-2xl bg-white hover:bg-rose-50 text-rose-700 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition cursor-pointer shrink-0"
+              >
+                <Flame className="w-4 h-4 text-rose-600" />
+                <span>{language === 'si' ? '🔥 Deal Pack එකක් හදන්න (Create Pack)' : '🔥 Create Deal Pack Now'}</span>
+              </button>
+            </div>
+          </div>
+
           {/* SECTION 2: 1-Click Product Link Importer with AI Description & Custom Profit Control */}
           <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-7 shadow-xs space-y-5">
             <div className="flex items-start justify-between flex-wrap gap-2">
@@ -1150,17 +1424,28 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setIsAddProductOpen(true)}
-                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer"
-              >
-                <Plus className="w-4 h-4 text-emerald-400" />
-                <span>{language === 'si' ? '+ අතින් භාණ්ඩයක් එක් කරන්න (Manual Form)' : '+ Add Custom Product'}</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('deal-packs')}
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 text-white font-black text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <Flame className="w-3.5 h-3.5 text-amber-200" />
+                  <span>{language === 'si' ? '🔥 Pack එකක් හදන්න' : '🔥 Create Deal Pack'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsAddProductOpen(true)}
+                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{language === 'si' ? '+ අතින් භාණ්ඩයක් එක් කරන්න' : '+ Add Custom Product'}</span>
+                </button>
+              </div>
             </div>
 
-            {/* Success Alert with Instant View In Storefront Button */}
+            {/* Success Alert with Instant View In Storefront Button & AI Video Script Generator */}
             {importSuccessProduct && (
               <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 space-y-3 animate-in fade-in duration-200">
                 <div className="flex items-center justify-between">
@@ -1176,7 +1461,12 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                   </button>
                 </div>
                 <div className="text-xs text-slate-700">
-                  <strong>{importSuccessProduct.title}</strong> — Price: <strong>Rs. {importSuccessProduct.price.toLocaleString()}</strong> (Your Profit: <strong>Rs. {importSuccessProduct.customProfitAmount?.toLocaleString()}</strong>)
+                  <strong>{importSuccessProduct.title}</strong> — Price: <strong>Rs. {importSuccessProduct.price.toLocaleString()}</strong>
+                  {importSuccessProduct.fulfillmentType === 'dropship_margin' && importSuccessProduct.customProfitAmount ? (
+                    <span> (Your Profit: <strong>Rs. {importSuccessProduct.customProfitAmount.toLocaleString()}</strong>)</span>
+                  ) : (
+                    <span> (Mode: <strong>Direct Affiliate COD</strong>)</span>
+                  )}
                 </div>
                 <div className="flex gap-2 flex-wrap">
                   <button
@@ -1189,11 +1479,19 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                   </button>
                   <button
                     type="button"
+                    onClick={() => handleOpenSingleProductVideoAI(importSuccessProduct.title, importSuccessProduct.price, importSuccessProduct.category)}
+                    className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-black text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                  >
+                    <Film className="w-3.5 h-3.5 text-amber-300" />
+                    <span>{language === 'si' ? '🎬 AI Video Script & Hook ගන්න' : '🎬 AI Video Script & Hook'}</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setProductToDelete(importSuccessProduct)}
                     className="px-3.5 py-2.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                    <span>{language === 'si' ? 'මෙම භාණ්ඩය ඉවත් කරන්න (Delete)' : 'Delete this product'}</span>
+                    <span>{language === 'si' ? 'ඉවත් කරන්න (Delete)' : 'Delete'}</span>
                   </button>
                   <button
                     type="button"
@@ -1359,161 +1657,235 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 </div>
               </div>
 
-              {/* SECTION: Custom Profit & Pricing Control (User Request 10 - Explicitly customizable by seller!) */}
-              <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-3.5">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-600" />
-                    <span className="font-black text-slate-900 text-xs sm:text-sm">
-                      {t.customProfitTitle}
+              {/* SECTION: Pricing & Profit Control (Only shown in Resell Margin mode, hidden in Direct Affiliate mode as requested!) */}
+              {importFulfillmentType === 'dropship_margin' ? (
+                <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-3.5">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-emerald-600" />
+                      <span className="font-black text-slate-900 text-xs sm:text-sm">
+                        {t.customProfitTitle}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-slate-500">
+                      {t.customProfitDesc}
                     </span>
                   </div>
-                  <span className="text-[11px] text-slate-500">
-                    {t.customProfitDesc}
-                  </span>
-                </div>
 
-                {/* Profit Mode Selector */}
-                <div className="flex gap-1.5 p-1 bg-white rounded-xl border border-slate-200 text-xs font-bold max-w-fit">
-                  <button
-                    type="button"
-                    onClick={() => setProfitMode('fixed')}
-                    className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                      profitMode === 'fixed' ? 'bg-emerald-600 text-white font-black shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {t.profitModeFixed}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setProfitMode('percent')}
-                    className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                      profitMode === 'percent' ? 'bg-emerald-600 text-white font-black shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {t.profitModePercent}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setProfitMode('direct')}
-                    className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                      profitMode === 'direct' ? 'bg-emerald-600 text-white font-black shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {t.profitModeDirect}
-                  </button>
-                </div>
-
-                {/* Pricing Calculation Inputs Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                  {/* Buy Cost */}
-                  <div className="space-y-1">
-                    <label className="font-bold text-slate-800">{t.buyCostLabel}</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-2.5 font-bold text-slate-400">Rs.</span>
-                      <input 
-                        type="number"
-                        min="0"
-                        value={importedBuyCost}
-                        onChange={(e) => setImportedBuyCost(Number(e.target.value))}
-                        className="w-full pl-10 pr-3 py-2 rounded-xl border border-slate-300 font-black bg-white"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Profit input depending on mode */}
-                  <div className="space-y-1">
-                    {profitMode === 'fixed' && (
-                      <>
-                        <label className="font-bold text-emerald-800">{t.profitModeFixed}:</label>
-                        <div className="relative">
-                          <span className="absolute left-3 top-2.5 font-bold text-emerald-600">+Rs.</span>
-                          <input 
-                            type="number"
-                            min="0"
-                            value={customProfitRs}
-                            onChange={(e) => setCustomProfitRs(Number(e.target.value))}
-                            className="w-full pl-12 pr-3 py-2 rounded-xl border-2 border-emerald-500 font-black text-emerald-700 bg-white focus:outline-none"
-                          />
-                        </div>
-                      </>
-                    )}
-
-                    {profitMode === 'percent' && (
-                      <>
-                        <label className="font-bold text-emerald-800">{t.profitModePercent}:</label>
-                        <div className="relative">
-                          <span className="absolute right-3 top-2.5 font-bold text-emerald-600">%</span>
-                          <input 
-                            type="number"
-                            min="0"
-                            value={customProfitPercent}
-                            onChange={(e) => setCustomProfitPercent(Number(e.target.value))}
-                            className="w-full pl-3 pr-8 py-2 rounded-xl border-2 border-emerald-500 font-black text-emerald-700 bg-white focus:outline-none"
-                          />
-                        </div>
-                      </>
-                    )}
-
-                    {profitMode === 'direct' && (
-                      <>
-                        <label className="font-bold text-emerald-800">{t.profitModeDirect}:</label>
-                        <div className="relative">
-                          <span className="absolute left-3 top-2.5 font-bold text-emerald-600">Rs.</span>
-                          <input 
-                            type="number"
-                            min={importedBuyCost}
-                            value={customDirectPrice}
-                            onChange={(e) => setCustomDirectPrice(Number(e.target.value))}
-                            className="w-full pl-10 pr-3 py-2 rounded-xl border-2 border-emerald-500 font-black text-emerald-700 bg-white focus:outline-none"
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Category */}
-                  <div className="space-y-1">
-                    <label className="font-bold text-slate-800">
-                      {language === 'si' ? 'වර්ගය (Category):' : 'Category:'}
-                    </label>
-                    <select 
-                      value={importedCategory}
-                      onChange={(e) => setImportedCategory(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 bg-white cursor-pointer font-bold"
+                  {/* Profit Mode Selector */}
+                  <div className="flex gap-1.5 p-1 bg-white rounded-xl border border-slate-200 text-xs font-bold max-w-fit">
+                    <button
+                      type="button"
+                      onClick={() => setProfitMode('fixed')}
+                      className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                        profitMode === 'fixed' ? 'bg-emerald-600 text-white font-black shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                     >
-                      <option value="Electronics">Electronics</option>
-                      <option value="Clothing">Clothing</option>
-                      <option value="Home & Living">Home & Living</option>
-                      <option value="Beauty & Health">Beauty & Health</option>
-                      <option value="Accessories">Accessories</option>
-                      <option value="Digital Products">Digital Products</option>
-                    </select>
+                      {t.profitModeFixed}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProfitMode('percent')}
+                      className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                        profitMode === 'percent' ? 'bg-emerald-600 text-white font-black shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {t.profitModePercent}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProfitMode('direct')}
+                      className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                        profitMode === 'direct' ? 'bg-emerald-600 text-white font-black shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {t.profitModeDirect}
+                    </button>
                   </div>
-                </div>
 
-                {/* Real-time Profit Summary Visualizer */}
-                <div className="p-3 rounded-xl bg-emerald-50/80 border border-emerald-200/90 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-3">
-                    <div>
-                      <span className="text-[10px] text-emerald-800 uppercase font-bold block">{t.yourProfitLabel}</span>
-                      <span className="text-sm sm:text-base font-black text-emerald-700">
-                        +Rs. {pocketProfit.toLocaleString()} ({marginPct}% margin)
-                      </span>
+                  {/* Pricing Calculation Inputs Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    {/* Buy Cost */}
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-800">{t.buyCostLabel}</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 font-bold text-slate-400">Rs.</span>
+                        <input 
+                          type="number"
+                          min="0"
+                          value={importedBuyCost}
+                          onChange={(e) => setImportedBuyCost(Number(e.target.value))}
+                          className="w-full pl-10 pr-3 py-2 rounded-xl border border-slate-300 font-black bg-white"
+                        />
+                      </div>
                     </div>
-                    <div className="h-6 w-px bg-emerald-200" />
-                    <div>
-                      <span className="text-[10px] text-slate-500 uppercase font-bold block">{t.finalSellingPriceLabel}</span>
-                      <span className="text-sm sm:text-base font-black text-slate-900">
-                        Rs. {sellPrice.toLocaleString()}
-                      </span>
+
+                    {/* Profit input depending on mode */}
+                    <div className="space-y-1">
+                      {profitMode === 'fixed' && (
+                        <>
+                          <label className="font-bold text-emerald-800">{t.profitModeFixed}:</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 font-bold text-emerald-600">+Rs.</span>
+                            <input 
+                              type="number"
+                              min="0"
+                              value={customProfitRs}
+                              onChange={(e) => setCustomProfitRs(Number(e.target.value))}
+                              className="w-full pl-12 pr-3 py-2 rounded-xl border-2 border-emerald-500 font-black text-emerald-700 bg-white focus:outline-none"
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {profitMode === 'percent' && (
+                        <>
+                          <label className="font-bold text-emerald-800">{t.profitModePercent}:</label>
+                          <div className="relative">
+                            <span className="absolute right-3 top-2.5 font-bold text-emerald-600">%</span>
+                            <input 
+                              type="number"
+                              min="0"
+                              value={customProfitPercent}
+                              onChange={(e) => setCustomProfitPercent(Number(e.target.value))}
+                              className="w-full pl-3 pr-8 py-2 rounded-xl border-2 border-emerald-500 font-black text-emerald-700 bg-white focus:outline-none"
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {profitMode === 'direct' && (
+                        <>
+                          <label className="font-bold text-emerald-800">{t.profitModeDirect}:</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 font-bold text-emerald-600">Rs.</span>
+                            <input 
+                              type="number"
+                              min={importedBuyCost}
+                              value={customDirectPrice}
+                              onChange={(e) => setCustomDirectPrice(Number(e.target.value))}
+                              className="w-full pl-10 pr-3 py-2 rounded-xl border-2 border-emerald-500 font-black text-emerald-700 bg-white focus:outline-none"
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Category */}
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-800">
+                        {language === 'si' ? 'වර්ගය (Category):' : 'Category:'}
+                      </label>
+                      <select 
+                        value={importedCategory}
+                        onChange={(e) => setImportedCategory(e.target.value)}
+                        className="w-full p-2.5 rounded-xl border border-slate-300 bg-white cursor-pointer font-bold"
+                      >
+                        <option value="Electronics">Electronics</option>
+                        <option value="Clothing">Clothing</option>
+                        <option value="Home & Living">Home & Living</option>
+                        <option value="Beauty & Health">Beauty & Health</option>
+                        <option value="Accessories">Accessories</option>
+                        <option value="Digital Products">Digital Products</option>
+                      </select>
                     </div>
                   </div>
-                  <div className="text-[11px] text-slate-500 font-medium">
-                    {t.compareAtPriceLabel} <span className="line-through font-bold">Rs. {comparePrice.toLocaleString()}</span>
+
+                  {/* Real-time Profit Summary Visualizer */}
+                  <div className="p-3 rounded-xl bg-emerald-50/80 border border-emerald-200/90 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <span className="text-[10px] text-emerald-800 uppercase font-bold block">{t.yourProfitLabel}</span>
+                        <span className="text-sm sm:text-base font-black text-emerald-700">
+                          +Rs. {pocketProfit.toLocaleString()} ({marginPct}% margin)
+                        </span>
+                      </div>
+                      <div className="h-6 w-px bg-emerald-200" />
+                      <div>
+                        <span className="text-[10px] text-slate-500 uppercase font-bold block">{t.finalSellingPriceLabel}</span>
+                        <span className="text-sm sm:text-base font-black text-slate-900">
+                          Rs. {sellPrice.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-medium">
+                      {t.compareAtPriceLabel} <span className="line-through font-bold">Rs. {comparePrice.toLocaleString()}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                /* Direct Affiliate Mode: Retail price & commission information only (NO custom profit markup!) */
+                <div className="p-4 sm:p-5 rounded-2xl bg-orange-50/60 border border-orange-200/90 space-y-3.5">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <LinkIcon className="w-4 h-4 text-orange-600" />
+                      <span className="font-black text-slate-900 text-xs sm:text-sm">
+                        {language === 'si' ? '🔗 Direct Affiliate මිල සහ කොමිස් විස්තර' : '🔗 Direct Affiliate Price & Commission'}
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                      {language === 'si' ? '✓ COD සහ බෙදාහැරීම Daraz මඟින්' : '✓ COD & Delivery by Daraz'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    {/* Sourced Retail Price */}
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-800">
+                        {language === 'si' ? 'Daraz හි විකුණුම් මිල (Product Retail Price):' : 'Daraz Retail Price (Rs.):'}
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 font-bold text-slate-400">Rs.</span>
+                        <input 
+                          type="number"
+                          min="0"
+                          value={importedBuyCost}
+                          onChange={(e) => setImportedBuyCost(Number(e.target.value))}
+                          className="w-full pl-10 pr-3 py-2 rounded-xl border border-slate-300 font-black bg-white text-slate-900"
+                          placeholder="240"
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-500">
+                        {language === 'si' ? 'Daraz හි ඇති සැබෑ මිල. පාරිභෝගිකයාට Store එකේ පෙනෙන්නේ මෙම මිලයි.' : 'Exact price customer pays on Daraz.'}
+                      </span>
+                    </div>
+
+                    {/* Category */}
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-800">
+                        {language === 'si' ? 'වර්ගය (Category):' : 'Category:'}
+                      </label>
+                      <select 
+                        value={importedCategory}
+                        onChange={(e) => setImportedCategory(e.target.value)}
+                        className="w-full p-2.5 rounded-xl border border-slate-300 bg-white cursor-pointer font-bold"
+                      >
+                        <option value="Electronics">Electronics</option>
+                        <option value="Clothing">Clothing</option>
+                        <option value="Home & Living">Home & Living</option>
+                        <option value="Beauty & Health">Beauty & Health</option>
+                        <option value="Accessories">Accessories</option>
+                        <option value="Digital Products">Digital Products</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Commission Notice */}
+                  <div className="p-3 rounded-xl bg-white border border-orange-200 text-xs space-y-1">
+                    <div className="font-black text-orange-950 flex items-center justify-between">
+                      <span>💰 Daraz Affiliate Commission: ~4% - 12%</span>
+                      <span className="text-[11px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded">
+                        Est: Rs. {Math.max(10, Math.round((importedBuyCost || 240) * 0.04))} - Rs. {Math.max(25, Math.round((importedBuyCost || 240) * 0.12))} per sale
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      {language === 'si'
+                        ? 'පාරිභෝගිකයා Buy බටන් එක එබූ විට Daraz වෙත යොමුවී COD (භාණ්ඩය ලැබුණු පසු මුදල් ගෙවීම) හෝ Card මඟින් ඇණවුම සම්පූර්ණ කරයි. බෙදාහැරීම Daraz භාරයේ සිදු වන අතර, කොමිස් මුදල සෘජුවම ඔබගේ බැංකු ගිණුමට Daraz මඟින් ලැබේ.'
+                        : 'Customer clicks Buy button to checkout on Daraz. Daraz handles Cash on Delivery and fulfillment. You receive your affiliate commission directly from Daraz.'}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* AI Description Generator Button & Textarea */}
               <div className="space-y-1.5 text-xs">
@@ -2000,12 +2372,12 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white">
               {language === 'si' 
-                ? 'සමාජ මාධ්‍ය වීඩියෝ (TikTok / Reels) සඳහා Combo Packs සහ AI Video Prompts හදන්න' 
+                ? 'සමාජ මාධ්‍ය වීඩියෝ සඳහා Combo Packs සහ AI Video Scripts හදන්න' 
                 : 'Curate Viral Deal Bundles with AI Video Scripts & Dedicated Links'}
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
               {language === 'si'
-                ? 'රු. 500ට අඩු (හෝ ඕනෑම මිලක) බඩු එකතු කර Pack එකක් සාදන්න. ඒ සඳහාම වෙන්වූ Dedicated Link එකක් (උදා: ?pack=under-500) ලැබෙන අතර, AI මඟින් Short Video Script සහ CapCut/Kling AI Video Prompts එක ක්ලික් එකෙන් නිර්මාණය කරගත හැක.'
+                ? 'රු. 500ට අඩු (හෝ ඕනෑම මිලක) බඩු එකතු කර Pack එකක් සාදන්න. ඒ සඳහාම වෙන්වූ Dedicated Link එකක් (උදා: ?pack=under-500) ලැබෙන අතර, AI මඟින් Short Video Script සහ 9:16 Video Prompts එක ක්ලික් එකෙන් නිර්මාණය කරගත හැක.'
                 : 'Create high-converting budget bundles for social video campaigns. Get a dedicated pack link where visitors only see that pack, plus auto-generated AI short video scripts & prompts.'}
             </p>
           </div>
@@ -2268,8 +2640,8 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               {/* Notice */}
               <div className="p-3 rounded-2xl bg-indigo-900/40 border border-indigo-700/40 text-[11px] text-indigo-200 leading-relaxed">
                 {language === 'si' 
-                  ? '🔒 මතක් කිරීම: මෙම AI Video Prompt එක සහ Script එක ඔබේ ප්‍රයෝජනය සඳහා පමණි (CapCut AI / Kling / Sora වෙත ලබාදී වීඩියෝවක් සාදා ගැනීමට). මෙය Store එකේ පාරිභෝගිකයින්ට කිසිසේත්ම නොපෙනේ!'
-                  : '🔒 Private Notice: This AI prompt and script is strictly for you to produce short-form videos with CapCut AI or Kling. It is completely hidden from customers visiting your store.'}
+                  ? '🔒 මතක් කිරීම: මෙම AI Video Prompt එක සහ Script එක ඔබේ ප්‍රයෝජනය සඳහා පමණි (වීඩියෝවක් සාදා ගැනීමට). මෙය Store එකේ පාරිභෝගිකයින්ට කිසිසේත්ම නොපෙනේ!'
+                  : '🔒 Private Notice: This AI prompt and script is strictly for you to produce short-form commercial videos. It is completely hidden from customers visiting your store.'}
               </div>
 
               {/* 1. AI Video Generator Prompt */}
@@ -2277,7 +2649,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="font-black text-amber-400 text-xs flex items-center gap-1.5">
                     <Video className="w-3.5 h-3.5" />
-                    <span>AI Video Prompt (for Kling / Sora / CapCut AI):</span>
+                    <span>AI Video Generation Prompt (9:16 Commercial / Promo):</span>
                   </span>
                   <button
                     type="button"
@@ -2409,6 +2781,43 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100">
+                        <span>📦 {pack.productIds?.length || 0} Products • 🔗 {pack.affiliateLinks?.length || 0} Links</span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEditingDealPack(pack)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[10px] flex items-center gap-1 cursor-pointer transition"
+                          >
+                            <Edit3 className="w-3 h-3 text-indigo-600" />
+                            <span>{language === 'si' ? 'විස්තර වෙනස් කරන්න' : 'Edit Pack'}</span>
+                          </button>
+
+                          {(pack.aiVideoPrompt || pack.aiScriptSinhala) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveVideoProductTitle(pack.title);
+                                setActiveVideoProductPrice(pack.priceCap || 500);
+                                setActiveVideoProductCategory('Bundle');
+                                setSingleVideoAIResult({
+                                  videoPrompt: pack.aiVideoPrompt || '',
+                                  scriptSinhala: pack.aiScriptSinhala || '',
+                                  scriptEnglish: pack.aiScriptEnglish || '',
+                                  caption: pack.description || '',
+                                  hashtags: pack.aiHashtags || '#StoreWaveLK #BudgetDealsLK'
+                                });
+                                setIsSingleVideoModalOpen(true);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-[10px] flex items-center gap-1 cursor-pointer transition border border-purple-200"
+                            >
+                              <Video className="w-3 h-3 text-purple-600" />
+                              <span>{language === 'si' ? 'වීඩියෝ Script' : 'Video Script'}</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {/* Direct Link Box */}
@@ -2617,14 +3026,25 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => handleOpenEditProfit(product)}
-                      className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition"
-                    >
-                      <Edit3 className="w-3 h-3" />
-                      <span>{t.editProfit}</span>
-                    </button>
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleOpenEditProfit(product)}
+                        className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        <span>{t.editProfit}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenSingleProductVideoAI(product.title, product.price, product.category)}
+                        className="px-2.5 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition"
+                        title={language === 'si' ? 'මෙම භාණ්ඩය සඳහා AI Video Script සහ TikTok Prompts' : 'AI Video Script & TikTok Prompts'}
+                      >
+                        <Film className="w-3 h-3 text-purple-600" />
+                        <span>{language === 'si' ? '🎬 Script' : '🎬 Script'}</span>
+                      </button>
+                    </div>
                     <button
                       onClick={() => handleDeleteProduct(product)}
                       className="p-1.5 px-2 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer transition flex items-center gap-1 text-[11px] font-bold"
@@ -2740,24 +3160,30 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
               )}
             </div>
 
-            <button
-              onClick={() => {
-                try {
-                  localStorage.setItem('nextgen_theme', JSON.stringify(theme));
-                } catch (e) {}
-                alert(language === 'si' ? 'තේමාව සාර්ථකව සුරැකිණි!' : 'Theme updated successfully!');
-              }}
-              className="px-5 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs cursor-pointer shadow-xs"
-            >
-              {language === 'si' ? 'තේමාව සුරකින්න' : 'Save Theme'}
-            </button>
+            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500 font-medium">
+                {language === 'si' ? 'වෙනස්කම් Store එකෙහි සජීවීව පෙන්වීමට සුරකින්න.' : 'Save changes to apply live to your store.'}
+              </span>
+              <button
+                onClick={() => {
+                  try {
+                    localStorage.setItem('nextgen_theme', JSON.stringify(theme));
+                  } catch (e) {}
+                  alert(language === 'si' ? 'තේමාව සාර්ථකව සුරැකිණි!' : 'Theme updated successfully!');
+                }}
+                className="px-6 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs cursor-pointer shadow-md transition flex items-center gap-2"
+              >
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>{language === 'si' ? 'තේමාව සුරකින්න' : 'Save Theme'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* Tab: Settings */}
       {activeTab === 'settings' && (
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-4 sm:p-6 space-y-4 max-w-2xl text-xs">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-4 sm:p-6 space-y-4 max-w-2xl text-xs mb-16">
           <h3 className="font-black text-slate-900 text-base sm:text-lg">
             {language === 'si' ? 'වෙළඳසැලේ සැකසුම්' : 'Store Settings'}
           </h3>
@@ -2972,17 +3398,23 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 </ul>
               </div>
             </div>
-            <button
-              onClick={() => {
-                try {
-                  localStorage.setItem('nextgen_settings', JSON.stringify(settings));
-                } catch (e) {}
-                alert(language === 'si' ? 'සැකසුම් සාර්ථකව සුරැකිණි!' : 'Settings saved!');
-              }}
-              className="px-5 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs cursor-pointer shadow-xs"
-            >
-              {language === 'si' ? 'සැකසුම් සුරකින්න' : 'Save Settings'}
-            </button>
+            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500 font-medium">
+                {language === 'si' ? 'කඩයේ තොරතුරු යාවත්කාලීන කිරීමට සුරකින්න.' : 'Save changes to update store information.'}
+              </span>
+              <button
+                onClick={() => {
+                  try {
+                    localStorage.setItem('nextgen_settings', JSON.stringify(settings));
+                  } catch (e) {}
+                  alert(language === 'si' ? 'සැකසුම් සාර්ථකව සුරැකිණි!' : 'Settings saved!');
+                }}
+                className="px-6 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs cursor-pointer shadow-md transition flex items-center gap-2"
+              >
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>{language === 'si' ? 'සැකසුම් සුරකින්න' : 'Save Settings'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -3081,13 +3513,287 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
 
             <div>
               <h3 className="text-lg font-black text-slate-900">
-                {language === 'si' ? 'අලුත් භාණ්ඩයක් එක් කරන්න' : 'Add New Product to Store'}
+                {creationType === 'single'
+                  ? (language === 'si' ? 'අලුත් භාණ්ඩයක් එක් කරන්න' : 'Add New Product to Store')
+                  : (language === 'si' ? 'අලුත් Deal Pack එකක් සාදන්න' : 'Create New Deal Pack')}
               </h3>
               <p className="text-xs text-slate-500">
-                {language === 'si' ? 'කැමති මිල සහ ලාභය සකසා කඩයට එක් කරන්න.' : 'Create physical or digital products with custom profit.'}
+                {creationType === 'single'
+                  ? (language === 'si' ? 'තනි භාණ්ඩයක් Affiliate හෝ Resell ලෙස කඩයට එක් කරන්න.' : 'Add a single product to your store.')
+                  : (language === 'si' ? 'භාණ්ඩ කිහිපයක් එකතු කර රු. 500ට අඩු Combo Pack එකක් සාදන්න.' : 'Bundle multiple items together under a budget cap.')}
               </p>
             </div>
 
+            {/* Step 1: Selection between Single Product vs Deal Pack */}
+            <div className="space-y-1.5 pb-2 border-b border-slate-100">
+              <label className="font-bold text-slate-800 text-xs">
+                {language === 'si' ? 'ඔබ එකතු කරන්නේ කුමක්ද? (තෝරන්න):' : 'What would you like to create?'}
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCreationType('single')}
+                  className={`p-3 rounded-2xl border text-left transition flex items-center gap-2.5 cursor-pointer ${
+                    creationType === 'single'
+                      ? 'bg-indigo-50 border-indigo-600 ring-2 ring-indigo-600/20 text-indigo-950 font-bold'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className={`p-2 rounded-xl ${creationType === 'single' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                    <Package className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="font-black text-xs block">
+                      {language === 'si' ? '📦 තනි භාණ්ඩයක්' : '📦 Single Product'}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-normal">
+                      {language === 'si' ? 'Affiliate හෝ Resell' : 'Affiliate or Resell'}
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCreationType('pack')}
+                  className={`p-3 rounded-2xl border text-left transition flex items-center gap-2.5 cursor-pointer ${
+                    creationType === 'pack'
+                      ? 'bg-rose-50 border-rose-600 ring-2 ring-rose-600/20 text-rose-950 font-bold'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className={`p-2 rounded-xl ${creationType === 'pack' ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                    <Flame className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="font-black text-xs block">
+                      {language === 'si' ? '🎁 ඩීල් පැක් (Bundle)' : '🎁 Deal Pack'}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-normal">
+                      {language === 'si' ? 'රු. 500ට අඩු Combo' : 'Budget Combos'}
+                    </span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* If Deal Pack is selected */}
+            {creationType === 'pack' ? (
+              <form onSubmit={handleSaveModalDealPack} className="space-y-4">
+                {/* Pack Type Selector: Affiliate vs Custom */}
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-800 text-xs">
+                    {language === 'si' ? 'Pack එකේ වර්ගය (Bundle Type):' : 'Bundle Type:'}
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPackCreationMode('affiliate')}
+                      className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
+                        packCreationMode === 'affiliate'
+                          ? 'bg-orange-50 border-orange-600 ring-2 ring-orange-600/20 text-orange-950 font-bold'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="text-xs font-black">🔗 Affiliate Deal Pack</span>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">Links Bundle</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPackCreationMode('custom')}
+                      className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
+                        packCreationMode === 'custom'
+                          ? 'bg-indigo-50 border-indigo-600 ring-2 ring-indigo-600/20 text-indigo-950 font-bold'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="text-xs font-black">📦 Store Items Combo</span>
+                      <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded font-bold">Catalog</span>
+                    </button>
+                  </div>
+                </div>
+
+                {packCreationMode === 'affiliate' ? (
+                  <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/90 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-amber-950 text-xs flex items-center gap-1.5">
+                        <LinkIcon className="w-4 h-4 text-amber-600" />
+                        <span>{language === 'si' ? 'Affiliate Links (ඕනෑම ප්‍රමාණයක් එක් කරන්න):' : 'Affiliate Links (Add any number of links):'}</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
+                        {modalPackLinks.split('\n').filter(l => l.trim()).length} Links
+                      </span>
+                    </div>
+                    <textarea
+                      rows={3}
+                      required
+                      placeholder={language === 'si' 
+                        ? "Daraz ඇෆ්ලියට් links එක් පේළියකට එක බැගින් මෙතැනට paste කරන්න (උදා: https://s.daraz.lk/...)" 
+                        : "Paste affiliate links, one per line (e.g. https://s.daraz.lk/...)"}
+                      value={modalPackLinks}
+                      onChange={(e) => setModalPackLinks(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-amber-300 bg-white font-mono text-[11px] focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAnalyzeModalDealPack}
+                      disabled={isAnalyzingModalPack || !modalPackLinks.trim()}
+                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer disabled:opacity-50"
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 ${isAnalyzingModalPack ? 'animate-spin' : ''}`} />
+                      <span>{isAnalyzingModalPack ? (language === 'si' ? 'AI මඟින් හඳුනා ගනී...' : 'Analyzing Links...') : (language === 'si' ? '✨ සියල්ල හඳුනාගෙන Script & Description ලියන්න' : '✨ Auto-Detect & Generate Scripts')}</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200/90 space-y-2">
+                    <span className="font-black text-indigo-950 text-xs block">
+                      {language === 'si' ? 'කඩේ ඇති භාණ්ඩ වලින් Pack එකට තෝරන්න:' : 'Select items from your store:'}
+                    </span>
+                    <div className="max-h-36 overflow-y-auto space-y-1.5 p-2 bg-white rounded-xl border border-indigo-200">
+                      {products.map(p => (
+                        <label key={p.id} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-50 cursor-pointer text-xs">
+                          <input
+                            type="checkbox"
+                            checked={modalPackSelectedProds.includes(p.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setModalPackSelectedProds([...modalPackSelectedProds, p.id]);
+                              } else {
+                                setModalPackSelectedProds(modalPackSelectedProds.filter(id => id !== p.id));
+                              }
+                            }}
+                            className="rounded text-indigo-600"
+                          />
+                          <span className="truncate flex-1 font-bold text-slate-800">{p.title}</span>
+                          <span className="font-black text-slate-600 text-[11px]">Rs. {p.price.toLocaleString()}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Pack Title & Price Cap */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="sm:col-span-2 space-y-1">
+                    <label className="font-bold text-slate-800 text-xs">
+                      {language === 'si' ? 'Pack එකේ නම (Title):' : 'Deal Pack Title:'}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. රු. 500ට අඩු Super Combo Deal"
+                      value={modalPackTitle}
+                      onChange={(e) => setModalPackTitle(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 font-bold text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="font-bold text-slate-800 text-xs">
+                      {language === 'si' ? 'උපරිම මිල (Price Cap Rs.):' : 'Price Cap (Rs.):'}
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      value={modalPackPriceCap}
+                      onChange={(e) => setModalPackPriceCap(Number(e.target.value))}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 font-black text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Pack Description (Editable) */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-800 text-xs">
+                    {language === 'si' ? 'Pack විස්තරය (Description):' : 'Pack Description:'}
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={modalPackDescription}
+                    onChange={(e) => setModalPackDescription(e.target.value)}
+                    placeholder={language === 'si' ? 'පාරිභෝගිකයාට පෙනෙන විස්තරය මෙහි ලියන්න...' : 'Write pack description...'}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 text-xs"
+                  />
+                </div>
+
+                {/* AI Video Prompt & Voiceover Script (Directly Editable) */}
+                {modalPackAIResult && (
+                  <div className="p-3.5 rounded-2xl bg-slate-900 text-white space-y-3 border border-slate-800 shadow-md">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-xs text-amber-300 flex items-center gap-1.5">
+                        <Video className="w-4 h-4 text-amber-400" />
+                        <span>{language === 'si' ? '🎬 මෙම Deal Pack එක සඳහා වීඩියෝ Script & Prompt:' : '🎬 Deal Pack Video Script & Prompt:'}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleAnalyzeModalDealPack}
+                        disabled={isAnalyzingModalPack}
+                        className="text-[10px] text-purple-300 hover:text-white font-bold cursor-pointer"
+                      >
+                        🔄 Re-generate
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-amber-400 text-[10px]">9:16 Video Generation Prompt:</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(modalPackAIResult.videoPrompt);
+                            setCopiedScriptType('modalPackPrompt');
+                            setTimeout(() => setCopiedScriptType(null), 2000);
+                          }}
+                          className="text-[10px] text-amber-400 hover:text-amber-300 font-bold cursor-pointer"
+                        >
+                          {copiedScriptType === 'modalPackPrompt' ? 'Copied! ✅' : 'Copy'}
+                        </button>
+                      </div>
+                      <textarea
+                        rows={2}
+                        value={modalPackAIResult.videoPrompt}
+                        onChange={(e) => setModalPackAIResult({ ...modalPackAIResult, videoPrompt: e.target.value })}
+                        className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 font-mono text-[10px]"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-emerald-400 text-[10px]">සිංහල Voiceover Script:</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(modalPackAIResult.scriptSinhala);
+                            setCopiedScriptType('modalPackScript');
+                            setTimeout(() => setCopiedScriptType(null), 2000);
+                          }}
+                          className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold cursor-pointer"
+                        >
+                          {copiedScriptType === 'modalPackScript' ? 'Copied! ✅' : 'Copy'}
+                        </button>
+                      </div>
+                      <textarea
+                        rows={4}
+                        value={modalPackAIResult.scriptSinhala}
+                        onChange={(e) => setModalPackAIResult({ ...modalPackAIResult, scriptSinhala: e.target.value })}
+                        className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 font-sans text-[11px]"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Sticky Submit Button for Deal Pack */}
+                <div className="pt-2 sticky bottom-0 bg-white/95 backdrop-blur-xs pb-2 border-t border-slate-100">
+                  <button
+                    type="submit"
+                    className="w-full py-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs cursor-pointer shadow-lg transition flex items-center justify-center gap-2"
+                  >
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span>{language === 'si' ? '💾 Deal Pack එක සුරකින්න (Save Deal Pack)' : 'Save Deal Pack'}</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              /* Single Product Creation Form */
+              <>
             {/* Quick Affiliate Link Auto-Fill bar (User Request 9) */}
             <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 via-orange-50 to-amber-100/70 border border-amber-200/90 space-y-2">
               <div className="flex items-center justify-between flex-wrap gap-1">
@@ -3133,6 +3839,73 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
             </div>
 
             <form onSubmit={handleSaveManualProduct} className="space-y-4">
+              {/* Selling & Fulfillment Mode Selector (User Request 10 - Explicitly selectable!) */}
+              <div className="space-y-1.5">
+                <label className="font-bold text-slate-800 text-xs">
+                  {language === 'si' ? 'විකිණීමේ සහ බෙදාහැරීමේ ක්‍රමය (Selling & Fulfillment Mode):' : 'Selling & Fulfillment Mode:'}
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewFulfillmentType('dropship_margin');
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                      newFulfillmentType === 'dropship_margin'
+                        ? 'bg-indigo-50 border-indigo-600 ring-2 ring-indigo-600/20 text-indigo-950 font-bold'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[11px] font-black">
+                      <span>💰 Resell Margin</span>
+                      <span className="text-[9px] bg-amber-100 text-amber-800 px-1 py-0.2 rounded font-bold">Prepaid</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                      {language === 'si' ? 'ලාභය තබා විකිණීම' : 'Keep custom retail profit'}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewFulfillmentType('affiliate');
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                      newFulfillmentType === 'affiliate'
+                        ? 'bg-orange-50 border-orange-600 ring-2 ring-orange-600/20 text-orange-950 font-bold'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[11px] font-black">
+                      <span>🔗 Direct Affiliate</span>
+                      <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-bold">COD</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                      {language === 'si' ? 'Daraz නිල කොමිස් ක්‍රමය' : 'Daraz official commission'}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewFulfillmentType('physical_stock');
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                      newFulfillmentType === 'physical_stock'
+                        ? 'bg-emerald-50 border-emerald-600 ring-2 ring-emerald-600/20 text-emerald-950 font-bold'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[11px] font-black">
+                      <span>📦 Physical Stock</span>
+                      <span className="text-[9px] bg-blue-100 text-blue-800 px-1 py-0.2 rounded font-bold">COD / Store</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                      {language === 'si' ? 'තමන්ගේ තොග' : 'Own local inventory'}
+                    </p>
+                  </button>
+                </div>
+              </div>
               {/* Product Title and Category */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="sm:col-span-2 space-y-1">
@@ -3485,42 +4258,80 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 )}
               </div>
 
-              {/* Pricing & Profit */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="font-bold text-slate-800 text-xs">{t.buyCostLabel}</label>
-                  <input 
-                    type="number" 
-                    value={newCostPrice}
-                    onChange={(e) => setNewCostPrice(Number(e.target.value))}
-                    className="w-full p-2.5 rounded-xl border border-slate-300 font-bold text-xs"
-                  />
+              {/* Pricing & Profit (Cleaned based on fulfillment mode) */}
+              {newFulfillmentType === 'affiliate' ? (
+                <div className="p-3.5 rounded-2xl bg-orange-50/70 border border-orange-200 space-y-2">
+                  <div className="space-y-1">
+                    <label className="font-bold text-slate-800 text-xs">
+                      {language === 'si' ? 'Daraz හි විකුණුම් මිල (Product Retail Price Rs.):' : 'Product Retail Price (Rs.):'}
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 font-bold text-slate-400">Rs.</span>
+                      <input 
+                        type="number" 
+                        required
+                        value={newPrice}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setNewPrice(val);
+                          setNewCostPrice(val);
+                          setNewProfitAmount(0);
+                        }}
+                        placeholder="240"
+                        className="w-full pl-10 pr-3 py-2 rounded-xl border border-slate-300 font-black text-slate-900 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-600 bg-white p-2.5 rounded-xl border border-orange-200 leading-snug">
+                    <span className="font-black text-orange-950">🔗 Direct Affiliate Mode: </span>
+                    {language === 'si'
+                      ? 'පාරිභෝගිකයා Buy බටන් එක එබූ විට Daraz වෙත යොමු වේ. මුදල් අය කිරීම (COD) සහ බෙදාහැරීම Daraz සිදු කරන අතර, ඔබට Daraz වෙතින් 4% - 12% නිල කොමිස් මුදලක් ලැබේ.'
+                      : 'Customer buys directly on Daraz via your link. Daraz handles Cash on Delivery and fulfillment, and you receive the official commission.'}
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <label className="font-bold text-emerald-800 text-xs">{t.yourProfitLabel}</label>
-                  <input 
-                    type="number" 
-                    value={newProfitAmount}
-                    onChange={(e) => {
-                      const prof = Number(e.target.value);
-                      setNewProfitAmount(prof);
-                      setNewPrice(newCostPrice + prof);
-                    }}
-                    className="w-full p-2.5 rounded-xl border-2 border-emerald-500 text-emerald-700 font-black text-xs"
-                  />
-                </div>
-              </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-800 text-xs">{t.buyCostLabel}</label>
+                      <input 
+                        type="number" 
+                        value={newCostPrice}
+                        onChange={(e) => {
+                          const cost = Number(e.target.value);
+                          setNewCostPrice(cost);
+                          setNewPrice(cost + newProfitAmount);
+                        }}
+                        className="w-full p-2.5 rounded-xl border border-slate-300 font-bold text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="font-bold text-emerald-800 text-xs">{t.yourProfitLabel}</label>
+                      <input 
+                        type="number" 
+                        value={newProfitAmount}
+                        onChange={(e) => {
+                          const prof = Number(e.target.value);
+                          setNewProfitAmount(prof);
+                          setNewPrice(newCostPrice + prof);
+                        }}
+                        className="w-full p-2.5 rounded-xl border-2 border-emerald-500 text-emerald-700 font-black text-xs"
+                      />
+                    </div>
+                  </div>
 
-              <div className="space-y-1">
-                <label className="font-bold text-slate-800 text-xs">{t.finalSellingPriceLabel}</label>
-                <input 
-                  type="number" 
-                  required
-                  value={newPrice}
-                  onChange={(e) => setNewPrice(Number(e.target.value))}
-                  className="w-full p-2.5 rounded-xl border border-slate-300 font-black text-slate-900 text-xs"
-                />
-              </div>
+                  <div className="space-y-1">
+                    <label className="font-bold text-slate-800 text-xs">{t.finalSellingPriceLabel}</label>
+                    <input 
+                      type="number" 
+                      required
+                      value={newPrice}
+                      onChange={(e) => setNewPrice(Number(e.target.value))}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 font-black text-slate-900 text-xs"
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Superb AI Description Generator */}
               <div className="space-y-1.5 p-3 rounded-2xl bg-indigo-50/60 border border-indigo-100">
@@ -3559,13 +4370,224 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 />
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs cursor-pointer shadow-md transition"
-              >
-                {language === 'si' ? 'කඩයට භාණ්ඩය එක් කරන්න' : 'Publish Product to Store'}
-              </button>
-            </form>
+              {/* AI Video Script & 9:16 Prompts Generator inside Modal */}
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-900/90 via-indigo-900/90 to-slate-900 text-white space-y-2 border border-purple-500/30 shadow-md">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <span className="font-black text-xs text-purple-200 flex items-center gap-1.5">
+                    <Video className="w-4 h-4 text-amber-300" />
+                    <span>{language === 'si' ? '🎬 AI Video Script & 9:16 Video Prompts:' : '🎬 AI Video Script & 9:16 Prompts:'}</span>
+                  </span>
+                  <span className="text-[10px] text-amber-300 font-bold bg-white/10 px-2 py-0.5 rounded-full">
+                    9:16 Vertical Promo
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-snug">
+                  {language === 'si'
+                    ? 'මෙම භාණ්ඩය සඳහා 9:16 Vertical Video Prompt එක සහ සිංහල Voiceover Script එක එකවර ජනනය කරගන්න.'
+                    : 'Generate 9:16 commercial video prompts, Sinhala voiceover hooks, and hashtags for this item.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleOpenSingleProductVideoAI(newTitle || 'Trending Product', newPrice, newCategory)}
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-amber-300" />
+                  <span>{language === 'si' ? '🎬 වීඩියෝ ස්ක්‍රිප්ට් එක සහ AI Prompt එක ලබාගන්න' : '🎬 Generate AI Video Script & Prompt'}</span>
+                </button>
+              </div>
+
+              {/* Deal Pack / Combo Bundle Assignment inside Modal */}
+              <div className="p-3.5 rounded-2xl bg-rose-50/80 border border-rose-200/90 space-y-2">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <span className="font-black text-rose-950 text-xs flex items-center gap-1.5">
+                    <Flame className="w-4 h-4 text-rose-600" />
+                    <span>{language === 'si' ? '🎁 Deal Pack එකකට ඇතුළත් කරන්න (Combo Pack):' : '🎁 Add to Deal Pack / Bundle:'}</span>
+                  </span>
+                  <span className="text-[10px] text-rose-700 font-bold bg-rose-100 px-2 py-0.5 rounded-full">
+                    {language === 'si' ? 'රු. 500 Combo' : 'Bundles'}
+                  </span>
+                </div>
+                <select
+                  value={assignToPackId}
+                  onChange={(e) => setAssignToPackId(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-rose-300 bg-white font-bold text-xs cursor-pointer text-slate-800"
+                >
+                  <option value="none">{language === 'si' ? '❌ Pack එකකට දමන්න එපා (සාමාන්‍ය භාණ්ඩයක් පමණි)' : 'No Pack (Individual Product Only)'}</option>
+                  {settings.dealPacks?.map((pack) => (
+                    <option key={pack.id} value={pack.id}>
+                      🎁 {pack.title} ({pack.productIds.length} items • Cap: Rs. {pack.priceCap})
+                    </option>
+                  ))}
+                  <option value="new">{language === 'si' ? '✨ අලුත් Deal Pack එකක් සාදන්න...' : '✨ Create New Deal Pack with this item...'}</option>
+                </select>
+                {assignToPackId === 'new' && (
+                  <div className="pt-1.5 space-y-1">
+                    <input
+                      type="text"
+                      placeholder={language === 'si' ? 'අලුත් Deal Pack එකේ නම (උදා: රු. 500ට අඩු Super Combo)' : 'New Deal Pack Name (e.g. Under Rs. 500 Combo)'}
+                      value={newPackNameForProduct}
+                      onChange={(e) => setNewPackNameForProduct(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-rose-300 bg-white font-bold text-xs"
+                    />
+                  </div>
+                )}
+              </div>
+
+                {/* Sticky bottom submit bar so it is NEVER cut off */}
+                <div className="pt-2 sticky bottom-0 bg-white/95 backdrop-blur-xs pb-2 border-t border-slate-100">
+                  <button
+                    type="submit"
+                    className="w-full py-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs cursor-pointer shadow-lg transition"
+                  >
+                    {language === 'si' ? 'කඩයට භාණ්ඩය එක් කරන්න (Publish Product)' : 'Publish Product to Store'}
+                  </button>
+                </div>
+              </form>
+            </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Deal Pack Details & Script */}
+      {editingDealPack && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-4 shadow-2xl relative text-xs">
+            <button 
+              onClick={() => setEditingDealPack(null)}
+              className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-slate-100 cursor-pointer text-slate-500"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 font-black text-[10px] uppercase">
+                <Flame className="w-3 h-3 text-rose-600" />
+                <span>{language === 'si' ? 'Deal Pack එක සංස්කරණය' : 'Edit Deal Pack'}</span>
+              </div>
+              <h3 className="text-base sm:text-lg font-black text-slate-900 mt-1">
+                {language === 'si' ? 'Deal Pack විස්තර සහ වීඩියෝ Script වෙනස් කරන්න' : 'Edit Deal Pack Details & Video Script'}
+              </h3>
+            </div>
+
+            <div className="space-y-3.5">
+              {/* Title & Price Cap */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="font-bold text-slate-800 text-xs">
+                    {language === 'si' ? 'Pack එකේ නම (Title):' : 'Deal Pack Title:'}
+                  </label>
+                  <input
+                    type="text"
+                    value={editingDealPack.title}
+                    onChange={(e) => setEditingDealPack({ ...editingDealPack, title: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 font-bold text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-800 text-xs">
+                    {language === 'si' ? 'උපරිම මිල (Price Cap Rs.):' : 'Price Cap (Rs.):'}
+                  </label>
+                  <input
+                    type="number"
+                    value={editingDealPack.priceCap || 500}
+                    onChange={(e) => setEditingDealPack({ ...editingDealPack, priceCap: Number(e.target.value) })}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 font-black text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Description */}
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800 text-xs">
+                  {language === 'si' ? 'Pack විස්තරය (Description):' : 'Description:'}
+                </label>
+                <textarea
+                  rows={2}
+                  value={editingDealPack.description || ''}
+                  onChange={(e) => setEditingDealPack({ ...editingDealPack, description: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-300 text-xs"
+                />
+              </div>
+
+              {/* Affiliate Links in this pack */}
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800 text-xs">
+                  {language === 'si' ? 'ඇෆ්ලියට් Links (එක් පේළියකට එක බැගින්):' : 'Affiliate Links (one per line):'}
+                </label>
+                <textarea
+                  rows={3}
+                  value={(editingDealPack.affiliateLinks || []).join('\n')}
+                  onChange={(e) => {
+                    const lines = e.target.value.split('\n').map(l => l.trim()).filter(Boolean);
+                    setEditingDealPack({ ...editingDealPack, affiliateLinks: lines });
+                  }}
+                  className="w-full p-2.5 rounded-xl border border-slate-300 font-mono text-[11px]"
+                  placeholder="https://s.daraz.lk/..."
+                />
+              </div>
+
+              {/* AI Video Prompt & Voiceover Script Section */}
+              <div className="p-3.5 rounded-2xl bg-slate-900 text-white space-y-3 border border-slate-800">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="font-black text-xs text-amber-300 flex items-center gap-1.5">
+                    <Video className="w-4 h-4 text-amber-400" />
+                    <span>{language === 'si' ? '🎬 මෙම Pack එක සඳහා වීඩියෝ Script & Prompt:' : '🎬 Deal Pack Video Script & Prompt:'}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleRegenerateEditedDealPackAI}
+                    disabled={isRegeneratingPackAI}
+                    className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${isRegeneratingPackAI ? 'animate-spin' : ''}`} />
+                    <span>{isRegeneratingPackAI ? (language === 'si' ? 'AI සකසයි...' : 'Generating...') : (language === 'si' ? '🔄 Script එක ආයේ හදන්න' : '🔄 Re-generate with AI')}</span>
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-bold text-amber-400 text-[11px] block">
+                    9:16 Vertical Video Prompt:
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={editingDealPack.aiVideoPrompt || ''}
+                    onChange={(e) => setEditingDealPack({ ...editingDealPack, aiVideoPrompt: e.target.value })}
+                    className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 font-mono text-[11px]"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-bold text-emerald-400 text-[11px] block">
+                    සිංහල Voiceover Script (Hook + Showcase + CTA):
+                  </label>
+                  <textarea
+                    rows={5}
+                    value={editingDealPack.aiScriptSinhala || ''}
+                    onChange={(e) => setEditingDealPack({ ...editingDealPack, aiScriptSinhala: e.target.value })}
+                    className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 font-sans text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleSaveEditedDealPack}
+                  className="flex-1 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs cursor-pointer shadow-md transition"
+                >
+                  {language === 'si' ? '💾 වෙනස්කම් සුරකින්න (Save Changes)' : 'Save Changes'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingDealPack(null)}
+                  className="px-4 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs cursor-pointer hover:bg-slate-50 transition"
+                >
+                  {language === 'si' ? 'අවලංගු කරන්න' : 'Cancel'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -3653,6 +4675,165 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 className="flex-1 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs cursor-pointer hover:bg-slate-50 transition"
               >
                 {language === 'si' ? 'අවලංගු කරන්න' : 'Cancel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Single Product Video AI Generator (Kling / Sora / CapCut AI prompt & TikTok Script) */}
+      {isSingleVideoModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-gradient-to-b from-slate-900 via-indigo-950 to-slate-950 rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-4 shadow-2xl relative text-xs text-white border border-indigo-500/30">
+            <button 
+              onClick={() => setIsSingleVideoModalOpen(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-white/10 cursor-pointer text-slate-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                  {language === 'si' ? '9:16 Video Prompt & Voiceover Suite' : '9:16 Commercial Video Suite'}
+                </span>
+                <span className="text-[10px] text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-500/30">
+                  {language === 'si' ? '🔒 Merchant Private Tool' : 'Private'}
+                </span>
+              </div>
+              <h3 className="text-base sm:text-lg font-black text-white mt-1">
+                {activeVideoProductTitle} — <span className="text-emerald-400">Rs. {activeVideoProductPrice.toLocaleString()}</span>
+              </h3>
+              <p className="text-xs text-slate-300 mt-0.5">
+                {language === 'si' 
+                  ? '9:16 Vertical Video Prompt එක සහ සිංහල Voiceover Hook Script එක මෙන්න:' 
+                  : 'Automated 9:16 vertical commercial video prompt and viral hook script for social media.'}
+              </p>
+            </div>
+
+            {/* Merchant Privacy Notice */}
+            <div className="p-3 rounded-2xl bg-indigo-900/40 border border-indigo-700/40 text-[11px] text-indigo-200 leading-relaxed">
+              {language === 'si'
+                ? '🔒 මතක් කිරීම: මෙම AI Video Prompt එක සහ Script එක ඔබේ ප්‍රයෝජනය සඳහා පමණි (වීඩියෝවක් සාදා ගැනීමට). මෙය Store එකේ පාරිභෝගිකයින්ට කිසිසේත්ම නොපෙනේ!'
+                : '🔒 Private Notice: This AI prompt and script is strictly for you to produce short-form commercial videos. It is completely hidden from customers visiting your store.'}
+            </div>
+
+            {isGeneratingSingleVideoAI && (
+              <div className="py-12 text-center space-y-3">
+                <Sparkles className="w-8 h-8 text-amber-400 animate-spin mx-auto" />
+                <p className="font-bold text-sm text-slate-200">
+                  {language === 'si' ? '🤖 AI මඟින් වීඩියෝ Prompt එක සහ Voiceover Script එක සකසමින් පවතී...' : 'Generating 9:16 video prompt and viral script...'}
+                </p>
+              </div>
+            )}
+
+            {!isGeneratingSingleVideoAI && singleVideoAIResult && (
+              <div className="space-y-4">
+                {/* 1. 9:16 Vertical Video Prompt */}
+                <div className="space-y-1.5 p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-amber-400 text-xs flex items-center gap-1.5">
+                      <Video className="w-3.5 h-3.5" />
+                      <span>AI Video Generation Prompt (9:16 Commercial / Promo):</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(singleVideoAIResult.videoPrompt);
+                        setCopiedScriptType('videoPrompt');
+                        setTimeout(() => setCopiedScriptType(null), 2000);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>{copiedScriptType === 'videoPrompt' ? 'Copied! ✅' : 'Copy Prompt'}</span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-300 font-mono bg-slate-950 p-2.5 rounded-xl border border-slate-800 leading-relaxed select-all">
+                    {singleVideoAIResult.videoPrompt}
+                  </p>
+                </div>
+
+                {/* 2. Sinhala Script */}
+                <div className="space-y-1.5 p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-emerald-400 text-xs flex items-center gap-1.5">
+                      <Film className="w-3.5 h-3.5" />
+                      <span>🎬 සිංහල Video Script (Hook + Showcase + Call to Action):</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(singleVideoAIResult.scriptSinhala);
+                        setCopiedScriptType('sinhala');
+                        setTimeout(() => setCopiedScriptType(null), 2000);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] flex items-center gap-1 cursor-pointer transition"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>{copiedScriptType === 'sinhala' ? 'Copied! ✅' : 'Copy Script'}</span>
+                    </button>
+                  </div>
+                  <pre className="text-[11px] text-slate-200 font-sans whitespace-pre-wrap bg-slate-950 p-2.5 rounded-xl border border-slate-800 leading-relaxed">
+                    {singleVideoAIResult.scriptSinhala}
+                  </pre>
+                </div>
+
+                {/* 3. English Script & Social Caption */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5 p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-indigo-300 text-[11px]">English Script:</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(singleVideoAIResult.scriptEnglish);
+                          setCopiedScriptType('english');
+                          setTimeout(() => setCopiedScriptType(null), 2000);
+                        }}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold cursor-pointer"
+                      >
+                        {copiedScriptType === 'english' ? 'Copied! ✅' : 'Copy'}
+                      </button>
+                    </div>
+                    <pre className="text-[10px] text-slate-300 font-sans whitespace-pre-wrap bg-slate-950 p-2 rounded-xl">
+                      {singleVideoAIResult.scriptEnglish}
+                    </pre>
+                  </div>
+
+                  <div className="space-y-1.5 p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-300 text-[11px]">Social Caption & Hashtags:</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cap = `${singleVideoAIResult.caption}\n\n${singleVideoAIResult.hashtags}`;
+                          navigator.clipboard?.writeText(cap);
+                          setCopiedScriptType('caption');
+                          setTimeout(() => setCopiedScriptType(null), 2000);
+                        }}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-bold cursor-pointer"
+                      >
+                        {copiedScriptType === 'caption' ? 'Copied! ✅' : 'Copy'}
+                      </button>
+                    </div>
+                    <div className="text-[10px] text-slate-300 bg-slate-950 p-2 rounded-xl space-y-1">
+                      <p>{singleVideoAIResult.caption}</p>
+                      <p className="text-indigo-400 font-mono text-[9px]">{singleVideoAIResult.hashtags}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsSingleVideoModalOpen(false)}
+                className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs cursor-pointer transition"
+              >
+                {language === 'si' ? 'වසන්න (Close)' : 'Close'}
               </button>
             </div>
           </div>

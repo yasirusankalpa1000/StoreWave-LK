@@ -106,7 +106,7 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (parsed.storeName === 'AURA Studios' || !parsed.storeName) {
           parsed.storeName = 'TrendWave LK';
-          parsed.tagline = 'Viral TikTok Finds, Smart Gadgets & Trending Essentials';
+          parsed.tagline = 'Trending Finds, Smart Gadgets & Everyday Essentials';
         }
         return parsed;
       }
@@ -683,7 +683,7 @@ export default function App() {
       )}
 
       {/* Main Mode View */}
-      <main className="flex-1">
+      <main className={`flex-1 ${currentMode !== 'storefront' ? 'pb-24 md:pb-8' : ''}`}>
         {currentMode === 'storefront' && (
           <>
             {/* Pure Clean Storefront: Zero black bars at the top. Storefront starts immediately at top! */}
@@ -731,7 +731,7 @@ export default function App() {
                     }
                   }}
                   className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-1.5 rounded-full font-bold text-xs flex items-center gap-1.5 shadow-md transition cursor-pointer"
-                  title={language === 'si' ? 'පාරිභෝගිකයින්ට දෙන Link එක Copy කරගන්න' : 'Copy Customer Link for TikTok / Reels'}
+                  title={language === 'si' ? 'පාරිභෝගිකයින්ට දෙන Link එක Copy කරගන්න' : 'Copy Customer Link'}
                 >
                   <Share2 className="w-3.5 h-3.5 text-white" />
                   <span>

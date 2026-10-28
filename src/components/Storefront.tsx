@@ -779,21 +779,22 @@ export const Storefront: React.FC<StorefrontProps> = ({
                   : 'You have started with a clean blank canvas! Head to your Merchant Dashboard to import Daraz/Amazon affiliate items or upload your own products.'}
               </p>
             </div>
-            {isOwnerMode && (
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const event = new CustomEvent('open-add-product-or-dashboard');
-                    window.dispatchEvent(event);
-                  }}
-                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition inline-flex items-center gap-2 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>{language === 'si' ? 'භාණ්ඩ එකතු කිරීමට Dashboard යන්න' : 'Go to Dashboard & Add Products'}</span>
-                </button>
-              </div>
-            )}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenDashboard) {
+                    onOpenDashboard();
+                  } else if (onOpenLogin) {
+                    onOpenLogin();
+                  }
+                }}
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition inline-flex items-center gap-2 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{language === 'si' ? 'භාණ්ඩ එකතු කිරීමට Dashboard යන්න' : 'Go to Dashboard & Add Products'}</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
@@ -2012,7 +2013,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                         url: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1600&q=80'
                       },
                       {
-                        name: 'Viral TikTok Finds',
+                        name: 'Trending Viral Finds',
                         url: 'https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&w=1600&q=80'
                       },
                       {
@@ -2063,7 +2064,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                     type="text" 
                     value={editTagline}
                     onChange={(e) => setEditTagline(e.target.value)}
-                    placeholder="e.g. Viral TikTok Finds & Smart Gadgets"
+                    placeholder="e.g. Trending Finds & Smart Gadgets"
                     className="w-full p-2.5 rounded-xl border border-slate-300 text-xs focus:border-indigo-500 focus:outline-none"
                   />
                 </div>

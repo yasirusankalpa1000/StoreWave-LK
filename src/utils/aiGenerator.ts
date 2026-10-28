@@ -15,10 +15,10 @@ export interface AnalyzedAffiliateProduct {
 // Registry of verified high-res product photos and categories for smart fallback & matching (Daraz & Amazon multi-angle galleries)
 export const PRODUCT_IMAGE_REGISTRY = [
   {
-    keywords: ['earbud', 'headphone', 'tws', 'airpod', 'bluetooth ear', 'headset', 'audio', 'sound'],
+    keywords: ['earbud', 'headphone', 'tws', 'airpod', 'bluetooth ear', 'headset', 'audio', 'sound', 'earphone', 'earphones', 'bass', 'super bass', 'stereo', 'wired ear', '3.5mm', 'connector with mic'],
     category: 'Electronics',
-    buyCost: 1450,
-    profit: 850,
+    buyCost: 240,
+    profit: 200,
     image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=800&q=80',
     images: [
       'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=800&q=80',
@@ -305,11 +305,92 @@ Discover top-rated performance with the all-new ${cleanedTitle}. Sourced directl
 📦 What's Inside: 1x ${cleanedTitle}, User Guide, and Secure Protective Retail Packaging.`;
 }
 
+export interface ExtractedPastedData {
+  url: string;
+  pastedTitle?: string;
+  pastedPrice?: number;
+  isShortLink: boolean;
+}
+
+export function extractPastedDetails(rawInput: string): ExtractedPastedData {
+  const text = (rawInput || '').trim();
+  // Find URL
+  const urlMatch = text.match(/(https?:\/\/[^\s]+)/i);
+  const url = urlMatch ? urlMatch[1] : '';
+
+  // Extract Price if present (e.g. Rs. 240.79, Rs 240, LKR 240.00)
+  let pastedPrice: number | undefined;
+  const priceMatch = text.match(/(?:Rs\.?|LKR)\s*([0-9]+(?:\.[0-9]{1,2})?)/i);
+  if (priceMatch && priceMatch[1]) {
+    pastedPrice = parseFloat(priceMatch[1]);
+  }
+
+  // Extract Title from text if text has words before or after the URL
+  let pastedTitle: string | undefined;
+  if (url) {
+    let withoutUrl = text.replace(url, '').trim();
+    if (priceMatch && priceMatch[0]) {
+      withoutUrl = withoutUrl.replace(priceMatch[0], '').trim();
+    }
+    // Remove trailing/leading punctuation
+    withoutUrl = withoutUrl
+      .replace(/^[-|:\s]+/, '')
+      .replace(/[-|:\s]+$/, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    if (withoutUrl.length > 4 && !withoutUrl.startsWith('http')) {
+      pastedTitle = withoutUrl;
+    }
+  }
+
+  const isShortLink = Boolean(
+    url.includes('s.daraz.lk') ||
+    url.includes('amzn.to') ||
+    url.includes('ali.ski') ||
+    url.includes('temu.to') ||
+    url.includes('a.aliexpress') ||
+    url.match(/daraz\.lk\/s\.[a-zA-Z0-9]+/)
+  );
+
+  return {
+    url,
+    pastedTitle,
+    pastedPrice,
+    isShortLink
+  };
+}
+
+// Server-side shortlink resolver
+export async function resolveAffiliateLinkServer(url: string): Promise<{ title?: string; imageUrl?: string; finalUrl?: string }> {
+  try {
+    const res = await fetch(`/api/resolve-link?url=${encodeURIComponent(url)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.title) {
+        return {
+          title: data.title,
+          imageUrl: data.imageUrl,
+          finalUrl: data.finalUrl
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('Could not resolve link via backend proxy:', e);
+  }
+  return {};
+}
+
 // Helper to extract a human-readable title from all major platforms
 export function extractTitleFromUrl(url: string): string {
   try {
     const parsed = new URL(url);
     const path = parsed.pathname;
+
+    // Check for shortlink domains first
+    if (parsed.hostname.includes('s.daraz.lk') || parsed.hostname.includes('amzn.to') || parsed.hostname.includes('ali.ski') || parsed.hostname.includes('temu.to')) {
+      return ''; // Shortlink codes are not titles!
+    }
 
     // Daraz pattern: /products/title-slug-i12345.html
     if (parsed.hostname.includes('daraz')) {
@@ -317,6 +398,10 @@ export function extractTitleFromUrl(url: string): string {
       const slug = parts[parts.length - 1] || parts[parts.length - 2] || '';
       const cleanSlug = slug.replace(/\.html.*$/, '').replace(/-i\d+.*$/, '');
       if (cleanSlug) {
+        // If it starts with 's.' or has no hyphens and is short, it's a shortlink hash
+        if (cleanSlug.startsWith('s.') || (!cleanSlug.includes('-') && cleanSlug.length < 12)) {
+          return '';
+        }
         return cleanSlug
           .split(/[-_]/)
           .filter(w => !w.match(/^\d+$/) && w.length > 1)
@@ -329,7 +414,7 @@ export function extractTitleFromUrl(url: string): string {
     if (parsed.hostname.includes('amazon') || parsed.hostname.includes('amzn')) {
       const segments = path.split('/').filter(Boolean);
       for (let i = 0; i < segments.length; i++) {
-        if (segments[i] !== 'dp' && segments[i] !== 'gp' && segments[i].length > 3 && !segments[i].startsWith('B0')) {
+        if (segments[i] !== 'dp' && segments[i] !== 'gp' && segments[i].length > 3 && !segments[i].startsWith('B0') && segments[i].includes('-')) {
           return segments[i]
             .split(/[-_]/)
             .filter(w => !w.match(/^\d+$/) && w.length > 1)
@@ -344,7 +429,7 @@ export function extractTitleFromUrl(url: string): string {
       const parts = path.split('/');
       const slug = parts[parts.length - 1] || '';
       const clean = slug.replace(/\.html.*$/, '');
-      if (clean && isNaN(Number(clean))) {
+      if (clean && isNaN(Number(clean)) && clean.includes('-')) {
         return clean
           .split(/[-_]/)
           .filter(w => !w.match(/^\d+$/) && w.length > 1)
@@ -358,7 +443,7 @@ export function extractTitleFromUrl(url: string): string {
       const parts = path.split('/');
       const slug = parts[parts.length - 1] || parts[parts.length - 2] || '';
       const clean = slug.replace(/\.html.*$/, '').replace(/_\d+.*$/, '');
-      if (clean) {
+      if (clean && clean.includes('-')) {
         return clean
           .split(/[-_]/)
           .filter(w => !w.match(/^\d+$/) && w.length > 1)
@@ -372,7 +457,7 @@ export function extractTitleFromUrl(url: string): string {
       const parts = path.split('/');
       const slug = parts[parts.length - 1] || parts[parts.length - 2] || '';
       const clean = slug.replace(/\.html.*$/, '').replace(/-\w{5,}$/, '');
-      if (clean) {
+      if (clean && clean.includes('-')) {
         return clean
           .split(/[-_]/)
           .filter(w => !w.match(/^\d+$/) && w.length > 1)
@@ -385,7 +470,7 @@ export function extractTitleFromUrl(url: string): string {
     if (parsed.hostname.includes('ebay')) {
       const parts = path.split('/');
       const slug = parts[parts.length - 1] || parts[parts.length - 2] || '';
-      if (slug && !slug.match(/^\d+$/)) {
+      if (slug && !slug.match(/^\d+$/) && slug.includes('-')) {
         return slug
           .split(/[-_]/)
           .filter(w => !w.match(/^\d+$/) && w.length > 1)
@@ -397,7 +482,57 @@ export function extractTitleFromUrl(url: string): string {
     // ignore
   }
 
-  return 'Trending Sourced Lifestyle Product';
+  return '';
+}
+
+export function isInvalidProductTitle(title: string | undefined): boolean {
+  if (!title) return true;
+  const t = title.trim();
+  if (t.length < 4) return true;
+  if (/^[sS]\.[a-zA-Z0-9_\-\.]+$/.test(t)) return true;
+  if (/^s-[a-zA-Z0-9]+$/i.test(t)) return true;
+  if (!t.includes(' ') && /[0-9]/.test(t) && /[A-Z]/.test(t) && t.length < 16) return true;
+  if (/https?:\/\//i.test(t) || /daraz\.lk/i.test(t) || /amzn\.to/i.test(t) || /aliexpress/i.test(t)) return true;
+  if (/^item\s*#?\d+$/i.test(t) || /^product\s*#?\d+$/i.test(t)) return true;
+  return false;
+}
+
+export function getDefaultCleanProductTitle(category: string, hintText: string = ''): string {
+  const lower = hintText.toLowerCase();
+  if (lower.includes('earphone') || lower.includes('earbud') || lower.includes('bass') || lower.includes('headphone') || lower.includes('headset') || lower.includes('audio') || lower.includes('mic')) {
+    return 'SUPER BASS Stereo Earphones 3.5mm Connector with Mic';
+  }
+  if (lower.includes('watch') || lower.includes('band') || lower.includes('tracker')) {
+    return 'Ultra Slim Waterproof Bluetooth Smart Fitness Watch';
+  }
+  if (lower.includes('blender') || lower.includes('juicer') || lower.includes('bottle') || lower.includes('cup')) {
+    return 'Portable USB Rechargeable Mini Fruit Juicer Blender 380ml';
+  }
+  if (lower.includes('keyboard') || lower.includes('gaming')) {
+    return 'RGB Backlit Mechanical Gaming Keyboard 87-Key Compact';
+  }
+  if (lower.includes('drone')) {
+    return '4K HD Dual Camera Foldable Mini WiFi FPV Drone';
+  }
+  if (lower.includes('mount') || lower.includes('holder')) {
+    return 'Magnetic Car Phone Mount 360 Rotation Dashboard Holder';
+  }
+  if (category === 'Electronics') {
+    return 'SUPER BASS Stereo Earphones 3.5mm Connector with Mic';
+  }
+  if (category === 'Home & Living') {
+    return 'Portable USB Rechargeable Mini Fruit Juicer Blender 380ml';
+  }
+  if (category === 'Clothing') {
+    return 'Minimalist Classic Breathable Cotton Lifestyle T-Shirt';
+  }
+  if (category === 'Accessories') {
+    return 'Multi-Compartment Waterproof Anti-Theft Backpack';
+  }
+  if (category === 'Beauty & Health') {
+    return 'Advanced Deep Tissue Electric Massage Therapy Gun';
+  }
+  return 'SUPER BASS Stereo Earphones 3.5mm Connector with Mic';
 }
 
 /**
@@ -407,10 +542,28 @@ export function extractTitleFromUrl(url: string): string {
  */
 export async function autoAnalyzeAndGenerateFromAffiliateLink(
   url: string,
-  lang: string = 'si'
+  lang: string = 'si',
+  manualTitle?: string,
+  manualPrice?: number
 ): Promise<AnalyzedAffiliateProduct> {
   const platform = detectPlatformFromUrl(url);
-  const rawTitle = extractTitleFromUrl(url);
+  let rawTitle = (!isInvalidProductTitle(manualTitle) ? manualTitle?.trim() : '') || extractTitleFromUrl(url);
+  if (isInvalidProductTitle(rawTitle)) {
+    rawTitle = '';
+  }
+  let resolvedImageUrl: string | undefined;
+
+  // If rawTitle is empty or url looks like a short link, try backend resolver
+  if (!rawTitle || url.includes('s.daraz.lk') || url.includes('amzn.to') || url.includes('ali.ski') || url.includes('temu.to')) {
+    const serverResult = await resolveAffiliateLinkServer(url);
+    if (serverResult.title && !isInvalidProductTitle(serverResult.title)) {
+      rawTitle = serverResult.title;
+    }
+    if (serverResult.imageUrl) {
+      resolvedImageUrl = serverResult.imageUrl;
+    }
+  }
+
   const isSinhala = lang === 'si';
   const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : '');
 
@@ -425,18 +578,19 @@ Platform: "${platform}"
 Raw slug text: "${rawTitle}"
 
 Task:
-1. Identify the EXACT physical or digital product being sold. Clean up all tracking codes, numbers, and URL artifacts to make a premium retail product title (e.g., "M10 TWS Wireless Earbuds 9D Stereo Touch Control with Powerbank").
+1. Identify the EXACT physical or digital product being sold. Clean up all tracking codes, numbers, and URL artifacts to make a premium retail product title (e.g., "SUPER BASS White Earphones 3.5mm Connector with Mic", "M10 TWS Wireless Earbuds 9D Stereo Touch Control with Powerbank").
+CRITICAL: Shortlink codes or hashes (such as "s.Z7LfR", "s.xxxx", tracking codes, or single random words) are NOT product titles. NEVER use a URL code or random string as the product title. If you cannot determine the exact product from the URL, inspect the product category and provide a premium, popular Sri Lankan e-commerce product title.
 2. Select the most accurate category among: "Electronics", "Clothing", "Home & Living", "Beauty & Health", "Accessories", "Digital Products".
-3. Estimate a realistic wholesale cost in Sri Lankan Rupees (LKR, typically 800 - 8000) and suggested profit markup (500 - 3000).
+3. Estimate a realistic wholesale cost in Sri Lankan Rupees (LKR, typically 240 - 4500) and suggested profit markup (200 - 2000).
 4. Write a captivating, high-converting product description ${isSinhala ? 'in natural, persuasive Sinhala language' : 'in high-converting English'} with selling hooks, 3-4 feature bullet points, and islandwide delivery reassurance.
-5. Identify a single keyword representing the item (e.g., "earbuds", "smartwatch", "blender", "keyboard", "sneakers", "backpack", "flask", "drone", "lamp", "tripod").
+5. Identify a single keyword representing the item (e.g., "earbuds", "earphone", "smartwatch", "blender", "keyboard", "sneakers", "backpack", "flask", "drone", "lamp", "tripod").
 
 Return ONLY valid JSON matching this structure without markdown code blocks:
 {
   "title": "Clean Product Title",
   "category": "Category Name",
-  "estimatedBuyCost": 1800,
-  "suggestedProfit": 950,
+  "estimatedBuyCost": 240,
+  "suggestedProfit": 200,
   "description": "Full sales description with bullet points",
   "keyword": "product keyword"
 }`;
@@ -455,9 +609,13 @@ Return ONLY valid JSON matching this structure without markdown code blocks:
         }
 
         const parsed = JSON.parse(cleanJsonText);
+        let finalTitle = parsed.title;
+        if (isInvalidProductTitle(finalTitle)) {
+          finalTitle = rawTitle || getDefaultCleanProductTitle(parsed.category || 'Electronics', url + ' ' + (rawTitle || ''));
+        }
         
         // Find best matching high-res image and multi-angle photos from registry
-        const lowerKeyword = (parsed.keyword || parsed.title || '').toLowerCase();
+        const lowerKeyword = (parsed.keyword || finalTitle || '').toLowerCase();
         let matchedEntry = PRODUCT_IMAGE_REGISTRY[0];
         for (const entry of PRODUCT_IMAGE_REGISTRY) {
           if (entry.keywords.some(k => lowerKeyword.includes(k) || rawTitle.toLowerCase().includes(k))) {
@@ -467,18 +625,18 @@ Return ONLY valid JSON matching this structure without markdown code blocks:
         }
 
         return {
-          title: parsed.title || rawTitle,
+          title: finalTitle,
           category: parsed.category || 'Electronics',
           platform,
-          description: parsed.description || await generateProductDescriptionAI(parsed.title || rawTitle, parsed.category, platform, lang),
-          imageUrl: matchedEntry.image,
-          images: matchedEntry.images && matchedEntry.images.length > 0 ? matchedEntry.images : [matchedEntry.image],
-          estimatedBuyCost: Number(parsed.estimatedBuyCost) || 1800,
-          suggestedProfit: Number(parsed.suggestedProfit) || 950
+          description: parsed.description || await generateProductDescriptionAI(finalTitle, parsed.category, platform, lang),
+          imageUrl: resolvedImageUrl || matchedEntry.image,
+          images: resolvedImageUrl ? [resolvedImageUrl, ...matchedEntry.images] : (matchedEntry.images && matchedEntry.images.length > 0 ? matchedEntry.images : [matchedEntry.image]),
+          estimatedBuyCost: manualPrice !== undefined ? manualPrice : (Number(parsed.estimatedBuyCost) || 240),
+          suggestedProfit: manualPrice !== undefined ? Math.round(manualPrice * 0.4) : (Number(parsed.suggestedProfit) || 200)
         };
       }
     } catch (err) {
-      console.warn('Gemini auto-analysis failed, falling back to intelligent rule engine:', err);
+      console.warn('AI auto-analysis failed, falling back to intelligent rule engine:', err);
     }
   }
 
@@ -486,28 +644,25 @@ Return ONLY valid JSON matching this structure without markdown code blocks:
   const lowerUrl = (url + ' ' + rawTitle).toLowerCase();
   let matchedEntry = PRODUCT_IMAGE_REGISTRY[0]; // fallback
   let detectedCategory = 'Electronics';
-  let buyCost = 1800;
-  let profit = 950;
+  let buyCost = manualPrice !== undefined ? manualPrice : 240;
+  let profit = manualPrice !== undefined ? Math.round(manualPrice * 0.4) : 200;
   let cleanTitle = rawTitle;
 
   for (const entry of PRODUCT_IMAGE_REGISTRY) {
     if (entry.keywords.some(k => lowerUrl.includes(k))) {
       matchedEntry = entry;
       detectedCategory = entry.category;
-      buyCost = entry.buyCost;
-      profit = entry.profit;
+      if (manualPrice === undefined) {
+        buyCost = entry.buyCost;
+        profit = entry.profit;
+      }
       break;
     }
   }
 
-  // If raw title is very short or generic, improve it based on category
-  if (!cleanTitle || cleanTitle === 'Trending Sourced Lifestyle Product' || cleanTitle.length < 5) {
-    if (lowerUrl.includes('watch')) cleanTitle = 'Ultra Slim Waterproof Bluetooth Smart Fitness Watch';
-    else if (lowerUrl.includes('earbud') || lowerUrl.includes('tws')) cleanTitle = 'M10 TWS Wireless Earbuds 9D Stereo with Powerbank';
-    else if (lowerUrl.includes('blender') || lowerUrl.includes('juicer')) cleanTitle = 'Portable USB Rechargeable Mini Fruit Juicer Blender 380ml';
-    else if (lowerUrl.includes('keyboard')) cleanTitle = 'RGB Backlit Mechanical Gaming Keyboard 87-Key Compact';
-    else if (lowerUrl.includes('drone')) cleanTitle = '4K HD Dual Camera Foldable Mini WiFi FPV Drone';
-    else cleanTitle = 'High Quality ' + detectedCategory + ' Sourced Edition';
+  // If raw title is missing, garbage, or short slug, set a clean human title
+  if (isInvalidProductTitle(cleanTitle)) {
+    cleanTitle = getDefaultCleanProductTitle(detectedCategory, lowerUrl);
   }
 
   // Generate the full sales copy automatically
@@ -518,8 +673,8 @@ Return ONLY valid JSON matching this structure without markdown code blocks:
     category: detectedCategory,
     platform,
     description,
-    imageUrl: matchedEntry.image,
-    images: matchedEntry.images && matchedEntry.images.length > 0 ? matchedEntry.images : [matchedEntry.image],
+    imageUrl: resolvedImageUrl || matchedEntry.image,
+    images: resolvedImageUrl ? [resolvedImageUrl, ...matchedEntry.images] : (matchedEntry.images && matchedEntry.images.length > 0 ? matchedEntry.images : [matchedEntry.image]),
     estimatedBuyCost: buyCost,
     suggestedProfit: profit
   };
@@ -635,10 +790,10 @@ export async function generateDealPackAIPromptAndScript(
   productNames: string[],
   storeName: string = 'StoreWave LK'
 ): Promise<GeneratedDealPackAI> {
-  const itemsText = productNames.length > 0 ? productNames.join(', ') : 'trending viral items';
+  const itemsText = productNames.length > 0 ? productNames.join(', ') : 'trending budget items';
   const priceText = `Rs. ${priceCap.toLocaleString()}`;
 
-  const videoPrompt = `Cinematic 9:16 vertical short-form video for TikTok and Instagram Reels. Aesthetic modern product showcase in clean studio lighting with soft pastel backdrop. Highlighting budget-friendly trending products: ${itemsText}. Bold vibrant on-screen badge displaying 'UNDER ${priceText} in Sri Lanka'. Fast-paced dynamic cuts, clean camera push-in, ultra HD, 60fps commercial aesthetic.`;
+  const videoPrompt = `Cinematic 9:16 vertical short-form commercial video. Aesthetic modern product showcase in clean studio lighting with soft pastel backdrop. Highlighting budget-friendly trending products: ${itemsText}. Bold vibrant on-screen badge displaying 'UNDER ${priceText} in Sri Lanka'. Fast-paced dynamic cuts, clean camera push-in, ultra HD, 60fps commercial aesthetic.`;
 
   const scriptSinhala = `🎬 [තත්පර 0-3 • Hook]
 "රුපියල් ${priceCap.toLocaleString()}ට අඩුවෙන් මේ වගේ බඩු ගන්න පුළුවන් කිව්වොත් ඔයාලා විශ්වාස කරනවද? 😱"
@@ -662,9 +817,56 @@ All under ${priceText} with islandwide fast delivery!"
 🚀 [13-18s • CTA]
 "Limited stock available, click the link in our bio to order before it sells out!"`;
 
-  const caption = `🔥 සීමිත තොග පමණයි! රු. ${priceCap.toLocaleString()}ට අඩුවෙන් ගන්න පුළුවන් Viral Gadgets & Items මෙන්න! Bio එකේ Link එකෙන් දැන්ම ගන්න. #StoreWaveLK #SriLanka #TrendingLK`;
+  const caption = `🔥 සීමිත තොග පමණයි! රු. ${priceCap.toLocaleString()}ට අඩුවෙන් ගන්න පුළුවන් Hot Deals & Items මෙන්න! Bio එකේ Link එකෙන් දැන්ම ගන්න. #StoreWaveLK #SriLanka #TrendingLK`;
 
-  const hashtags = `#StoreWaveLK #SriLankaDeals #BudgetDealsLK #Under${priceCap} #DarazAffiliate #LKA #TikTokShopLK #ViralLanka`;
+  const hashtags = `#StoreWaveLK #SriLankaDeals #BudgetDealsLK #Under${priceCap} #DarazAffiliate #LKA #DealsLK #ViralLanka`;
+
+  return {
+    videoPrompt,
+    scriptSinhala,
+    scriptEnglish,
+    caption,
+    hashtags
+  };
+}
+
+export async function generateSingleProductVideoPromptAndScript(
+  productTitle: string,
+  price: number,
+  category: string = 'Electronics',
+  storeName: string = 'StoreWave LK'
+): Promise<GeneratedDealPackAI> {
+  const priceText = `Rs. ${price.toLocaleString()}`;
+
+  const videoPrompt = `Cinematic 9:16 vertical short-form video advertisement showcasing "${productTitle}". Clean aesthetic studio lighting, dramatic 360-degree product rotation, crisp close-up details showing quality and texture. A sleek floating price tag badge on screen: "Only ${priceText} - Islandwide Cash on Delivery". Modern commercial color grading, high energy fast-paced visual cuts, 4K 60fps.`;
+
+  const scriptSinhala = `🎬 [තත්පර 0-3 • Hook]
+"ලංකාවේ මේ තරම් අඩුවට මේ සුපිරි ${productTitle} එක ගන්න පුළුවන් කියලා ඔයාලා දැනන් හිටියද? 😱🔥"
+
+📦 [තත්පර 4-12 • Showcase]
+"මෙන්න ${storeName} එකෙන් ගෙනාපු Top Quality එක! 
+✔️ සුපිරි build quality එක සහ කල්පැවැත්ම.
+✔️ මුළු ලංකාවටම Cash on Delivery (බඩු ලැබුණාම මුදල් ගෙවන්න).
+✔️ දැන්ම special discount එකක් එක්ක රුපියල් ${price.toLocaleString()}කටම ගන්න පුළුවන්!"
+
+🚀 [තත්පර 13-18 • Call to Action]
+"Stock ඉක්මනින්ම ඉවර වෙන්න පුළුවන්. දැන්ම Bio එකේ තියෙන අපේ StoreWave LK Store link එක click කරලා ඔයාගෙ එක order කරගන්න!"`;
+
+  const scriptEnglish = `🎬 [0-3s • Hook]
+"Stop scrolling! You can now get this ${productTitle} in Sri Lanka for just ${priceText}! 😱🔥"
+
+📦 [4-12s • Showcase]
+"Sourced with top-tier quality from ${storeName}:
+✔️ Premium build & verified genuine condition
+✔️ Fast islandwide Cash on Delivery right to your doorstep
+✔️ Unbeatable offer at only ${priceText}!"
+
+🚀 [13-18s • CTA]
+"Limited stock available! Tap the link in our bio right now to grab yours before it sells out!"`;
+
+  const caption = `🔥 සීමිත තොග පමණයි! "${productTitle}" දැන් විශේෂ වට්ටම් සහිතව රු. ${price.toLocaleString()}කට! දිවයින පුරා COD පහසුකම ඇත. Bio එකේ Store Link එකෙන් දැන්ම Grab කරගන්න! #StoreWaveLK #SriLanka #DarazLK`;
+
+  const hashtags = `#StoreWaveLK #SriLanka #DarazAffiliate #${category.replace(/[^a-zA-Z]/g, '')} #OnlineDealsLK #ViralLanka #BestDealsLK`;
 
   return {
     videoPrompt,

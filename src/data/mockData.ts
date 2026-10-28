@@ -103,7 +103,7 @@ export const INITIAL_PRODUCTS: Product[] = [
   {
     id: 'prod-4',
     title: '10" RGB LED Studio Ring Light with 2.1m Tripod',
-    description: 'Imported trending product from Daraz! Ideal for TikTok creators, Instagram reels, makeup artists, and live streamers. 3 light modes with adjustable dimmer.',
+    description: 'Imported trending product from Daraz! Ideal for content creators, reels, makeup artists, and live streamers. 3 light modes with adjustable dimmer.',
     price: 3650,
     compareAtPrice: 5200,
     costPrice: 1850,
@@ -123,7 +123,7 @@ export const INITIAL_PRODUCTS: Product[] = [
         author: 'Dulanja S.',
         rating: 5,
         date: 'Yesterday',
-        comment: 'Bought this for my TikTok videos. Solid tripod and multiple color modes!',
+        comment: 'Bought this for my videos and photo shoots. Solid tripod and multiple color modes!',
         photoUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?auto=format&fit=crop&w=400&q=80',
         verifiedPurchase: true
       }
@@ -238,7 +238,7 @@ export const INITIAL_ORDERS: Order[] = [
 
 export const INITIAL_SETTINGS: StoreSettings = {
   storeName: 'TrendWave LK',
-  tagline: 'Viral TikTok Finds, Smart Gadgets & Trending Essentials',
+  tagline: 'Trending Finds, Smart Gadgets & Everyday Essentials',
   logoUrl: '',
   currency: 'LKR',
   whatsappNumber: '+94771234567',
@@ -265,10 +265,10 @@ export const INITIAL_THEME: StoreTheme = {
   primaryColor: '#0f172a',
   accentColor: '#6366f1',
   fontStyle: 'modern',
-  bannerText: 'Sri Lanka’s #1 Viral TikTok Gadgets & Trending Finds',
-  bannerSubtext: 'Handpicked viral electronics, smart lifestyle gadgets, and top-rated accessories with fast doorstep delivery.',
+  bannerText: 'Sri Lanka’s Trending Gadgets & Lifestyle Finds',
+  bannerSubtext: 'Handpicked electronics, smart lifestyle accessories, and top-rated essentials with fast doorstep delivery.',
   bannerImage: 'https://images.unsplash.com/photo-1498049794561-7780e7231661?auto=format&fit=crop&w=1600&q=80',
-  announcementBar: '🔥 Trending on TikTok: Islandwide Fast Delivery & Verified Product Quality!',
+  announcementBar: '🔥 Hot Deals: Islandwide Fast Delivery & Verified Product Quality!',
   showAnnouncement: true
 };
 
